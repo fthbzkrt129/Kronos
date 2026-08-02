@@ -1,0 +1,73 @@
+name: BIST Yahoo Repair Probe
+
+on:
+  push:
+    branches:
+      - feature/bist-yahoo-data-pipeline
+    paths:
+      - ".github/workflows/bist-yahoo-repair-probe.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-repair-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install probe dependencies
+        run: python -m pip install pandas==2.2.2 yfinance
+
+      - name: Compare raw and repaired Yahoo candles
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          import yfinance as yf
+
+          from bist_data.quality import validate_candles
+          from bist_data.yahoo import normalize_yahoo_frame
+
+          for symbol in ("MIATK.IS", "PSGYO.IS"):
+              print(f"=== {symbol} ===")
+              for repair in (False, True):
+                  frame = yf.download(
+                      symbol,
+                      start="2015-01-01",
+                      end="2026-08-03",
+                      interval="1d",
+                      auto_adjust=False,
+                      actions=False,
+                      progress=False,
+                      group_by="column",
+                      threads=False,
+                      repair=repair,
+                  )
+                  normalized = normalize_yahoo_frame(frame, symbol)
+                  required_high = normalized[["open", "close", "low"]].max(axis=1)
+                  required_low = normalized[["open", "close", "high"]].min(axis=1)
+                  rejected = normalized.loc[
+                      (normalized["high"] < required_high)
+                      | (normalized["low"] > required_low)
+                  ].copy()
+                  print(f"repair={repair}; rejected_rows={len(rejected)}")
+                  if not rejected.empty:
+                      print(rejected.to_string(index=False))
+                  try:
+                      validate_candles(normalized)
+                      print(f"repair={repair}; validation=PASS")
+                  except Exception as exc:
+                      print(f"repair={repair}; validation=FAIL: {type(exc).__name__}: {exc}")
+          PY

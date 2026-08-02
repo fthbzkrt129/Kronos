@@ -42,14 +42,23 @@ def _read_shards(root):
     return records
 
 
-def _invalid_model_output_counts(skips: pd.DataFrame) -> dict[str, int]:
+def _reason_counts(skips: pd.DataFrame, reason_code: str, pattern: str) -> dict[str, int]:
     if skips.empty or "reason_code" not in skips.columns:
         return {}
-    invalid = skips.loc[skips.reason_code == "invalid_model_output"]
+    invalid = skips.loc[skips.reason_code == reason_code]
     if invalid.empty:
         return {}
-    arms = invalid.reason_detail.astype(str).str.extract(r"arm=([^;]+)", expand=False)
-    return {str(arm): int(count) for arm, count in arms.value_counts().items()}
+    labels = invalid.reason_detail.astype(str).str.extract(pattern, expand=False)
+    labels = labels.dropna()
+    return {str(label): int(count) for label, count in labels.value_counts().items()}
+
+
+def _invalid_model_output_counts(skips: pd.DataFrame) -> dict[str, int]:
+    return _reason_counts(skips, "invalid_model_output", r"arm=([^;]+)")
+
+
+def _invalid_baseline_output_counts(skips: pd.DataFrame) -> dict[str, int]:
+    return _reason_counts(skips, "invalid_baseline_output", r"method=([^;]+)")
 
 
 def run_adjusted_reducer(
@@ -131,7 +140,8 @@ def run_adjusted_reducer(
             direction_accuracy=("direction_correct", "mean"),
         )
     )
-    invalid_counts = _invalid_model_output_counts(skip_frame)
+    invalid_model_counts = _invalid_model_output_counts(skip_frame)
+    invalid_baseline_counts = _invalid_baseline_output_counts(skip_frame)
     requested_symbols = [
         symbol
         for manifest, directory in mini
@@ -169,10 +179,11 @@ def run_adjusted_reducer(
         "arm_metrics": arm_summary.to_dict("records"),
         "comparison_decisions": decisions,
         "exposure_counts": metric_frame.groupby("exposure_bucket").size().to_dict(),
-        "invalid_model_output_counts": invalid_counts,
-        "invalid_model_output_policy": (
-            "excluded per arm and window without clipping, imputation, retry, "
-            "or seed changes"
+        "invalid_model_output_counts": invalid_model_counts,
+        "invalid_baseline_output_counts": invalid_baseline_counts,
+        "invalid_output_policy": (
+            "excluded per arm, method, and window without clipping, imputation, "
+            "retry, or seed changes"
         ),
     }
 
@@ -197,7 +208,8 @@ def run_adjusted_reducer(
             "confidence": bootstrap_confidence,
             "seed": bootstrap_seed,
         },
-        "invalid_model_output_counts": invalid_counts,
+        "invalid_model_output_counts": invalid_model_counts,
+        "invalid_baseline_output_counts": invalid_baseline_counts,
     }
     factor = json.loads(Path(factor_manifest).read_text())
     write_benchmark_reduced_output(

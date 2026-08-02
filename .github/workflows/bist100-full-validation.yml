@@ -7,39 +7,36 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   prepare-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install data dependencies
-        run: python -m pip install pandas==2.2.2 yfinance==1.5.1
-      - name: Download strict BIST 100 histories
+      - name: Download verified 100-symbol research artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/download_bist_yahoo.py \
-            --universe data/universes/xu100_2026_q3.csv \
-            --as-of 2026-08-02 \
-            --start 2015-01-01 \
-            --end 2026-08-03 \
-            --output data/bist/yahoo \
-            --retries 3 \
-            --sleep-seconds 1.5 \
-            --fail-on-error
+          mkdir -p data/bist/yahoo
+          gh api repos/${{ github.repository }}/actions/artifacts/8826613095/zip > /tmp/bist-data.zip
+          echo "51578854a6fc341f34bff8bea4cf8f57d900006f2a35e2a34e983d6389933f2c  /tmp/bist-data.zip" | sha256sum -c -
+          unzip -q /tmp/bist-data.zip -d data/bist/yahoo
       - name: Validate complete data manifest
         run: |
           python - <<'PY'
           import json
-          manifest = json.load(open("data/bist/yahoo/manifest.json"))
+          from pathlib import Path
+          root = Path("data/bist/yahoo")
+          manifest = json.load(open(root / "manifest.json"))
           summary = manifest["summary"]
           assert summary == {"requested": 100, "succeeded": 100, "failed": 0}, summary
           assert len(manifest["successes"]) == 100
+          assert len(list((root / "kronos").glob("*.csv"))) == 100
+          assert {item["last_timestamp"] for item in manifest["successes"]} == {"2026-07-31"}
           print(summary)
+          print(manifest["request"])
           PY
       - uses: actions/upload-artifact@v4
         with:

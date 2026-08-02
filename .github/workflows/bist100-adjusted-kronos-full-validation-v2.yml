@@ -65,18 +65,21 @@ jobs:
         with:
           name: adjusted-v2-data-${{ github.run_id }}
           path: .artifacts
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: adjusted-v2-mini-model-${{ github.run_id }}
           path: .models/kronos-mini
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: adjusted-v2-small-model-${{ github.run_id }}
           path: .models/kronos-small
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
 
@@ -94,7 +97,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-small-model-${{ github.run_id }}
@@ -162,7 +165,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-mini-model-${{ github.run_id }}
@@ -192,6 +195,7 @@ jobs:
         with:
           name: adjusted-v2-mini-shard-${{ matrix.shard_index }}
           path: .artifacts/mini/shard-${{ matrix.shard_index }}
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
 
@@ -214,7 +218,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-small-model-${{ github.run_id }}
@@ -246,6 +250,7 @@ jobs:
         with:
           name: adjusted-v2-small-shard-${{ matrix.shard_index }}
           path: .artifacts/small/shard-${{ matrix.shard_index }}
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
 
@@ -271,7 +276,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-v2-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - name: Reduce all 20 shards
         run: |
           python scripts/reduce_bist100_adjusted_benchmark.py \

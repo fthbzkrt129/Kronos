@@ -9,6 +9,17 @@ This fork includes a research-only adapter that downloads daily Borsa Istanbul c
 - Yahoo does not provide official daily turnover in this download. The Kronos `amount` value is estimated as `((high + low + close) / 3) * volume`.
 - Do not connect this pipeline directly to a live brokerage account. Validate with licensed data, walk-forward backtests, and paper trading first.
 
+## OHLC quality handling
+
+The pipeline keeps the normalized Yahoo response unchanged in `raw/`. Yahoo can occasionally publish a daily close just outside the reported high/low range. Kronos requires a mathematically valid OHLC candle, so the model-ready copy applies only the smallest envelope expansion needed:
+
+```text
+high = max(high, open, close, low)
+low  = min(low, open, close, high)
+```
+
+No open, close, volume, or raw CSV value is overwritten. Every adjusted high/low cell is recorded in `manifest.json` with its date, original value, replacement value, and reason.
+
 ## Installation
 
 ```bash
@@ -70,7 +81,7 @@ Kronos CSV files contain:
 timestamps,open,high,low,close,volume,amount
 ```
 
-The manifest records the requested date range, successful symbols, failed symbols, row counts, file paths, and data limitations. Without `--fail-on-error`, failures are recorded but successful symbols are still written.
+The manifest records the requested date range, successful symbols, failed symbols, row counts, file paths, data limitations, and audited OHLC repairs. Without `--fail-on-error`, failures are recorded but successful symbols are still written.
 
 ## Run tests
 

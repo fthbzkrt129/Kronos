@@ -167,7 +167,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-benchmark-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-benchmark-mini-model-${{ github.run_id }}
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-benchmark-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-benchmark-small-model-${{ github.run_id }}
@@ -273,7 +273,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: adjusted-benchmark-data-${{ github.run_id }}
-          path: .
+          path: .artifacts
       - name: Reduce all 20 shards
         run: |
           python scripts/reduce_bist100_adjusted_benchmark.py \

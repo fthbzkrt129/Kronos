@@ -17,7 +17,11 @@ import pandas as pd
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bist_data.quality import to_kronos_frame, validate_candles
+from bist_data.quality import (
+    repair_ohlc_envelope,
+    to_kronos_frame,
+    validate_candles,
+)
 from bist_data.universe import UniverseEntry, load_universe
 from bist_data.yahoo import download_daily_candles
 
@@ -98,8 +102,9 @@ def run_pipeline(
                 downloader=downloader,
                 sleep_seconds=sleep_seconds,
             )
-            raw = validate_candles(raw)
-            kronos = to_kronos_frame(raw)
+            model_frame, ohlc_repairs = repair_ohlc_envelope(raw)
+            validated = validate_candles(model_frame)
+            kronos = to_kronos_frame(validated)
 
             raw_path = output / "raw" / f"{entry.symbol}.csv"
             kronos_path = output / "kronos" / f"{entry.symbol}.csv"
@@ -110,11 +115,13 @@ def run_pipeline(
                 {
                     "symbol": entry.symbol,
                     "yahoo_symbol": entry.yahoo_symbol,
-                    "rows": len(raw),
-                    "first_timestamp": raw["timestamps"].min().date().isoformat(),
-                    "last_timestamp": raw["timestamps"].max().date().isoformat(),
+                    "rows": len(validated),
+                    "first_timestamp": validated["timestamps"].min().date().isoformat(),
+                    "last_timestamp": validated["timestamps"].max().date().isoformat(),
                     "raw_file": str(raw_path),
                     "kronos_file": str(kronos_path),
+                    "ohlc_repair_count": len(ohlc_repairs),
+                    "ohlc_repairs": ohlc_repairs,
                 }
             )
         except Exception as exc:
@@ -127,6 +134,7 @@ def run_pipeline(
                 }
             )
 
+    repair_count = sum(item["ohlc_repair_count"] for item in successes)
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -150,11 +158,15 @@ def run_pipeline(
             "succeeded": len(successes),
             "failed": len(failures),
         },
+        "quality": {
+            "ohlc_repairs": repair_count,
+        },
         "successes": successes,
         "failures": failures,
         "limitations": [
             "Yahoo data is for personal research and is not an official Borsa Istanbul feed.",
             "The amount column is estimated as typical price multiplied by volume.",
+            "Raw CSV files preserve normalized Yahoo values; Kronos CSV files may minimally expand high or low to contain open and close, with every repair audited in the manifest.",
             "Corporate-action and historical-index-membership accuracy require licensed data before live use.",
         ],
     }
@@ -213,7 +225,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary = manifest["summary"]
     print(
         "BIST Yahoo download complete: "
-        f"{summary['succeeded']} succeeded, {summary['failed']} failed."
+        f"{summary['succeeded']} succeeded, {summary['failed']} failed, "
+        f"{manifest['quality']['ohlc_repairs']} audited OHLC repair(s)."
     )
     print(f"Manifest: {Path(args.output) / 'manifest.json'}")
     return exit_code

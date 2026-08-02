@@ -50,7 +50,12 @@ def _to_yahoo_symbol(symbol: str) -> str:
 
 
 def normalize_yahoo_frame(frame: pd.DataFrame, yahoo_symbol: str) -> pd.DataFrame:
-    """Normalize flat or MultiIndex yfinance output into a stable schema."""
+    """Normalize flat or MultiIndex yfinance output into a stable schema.
+
+    Incomplete OHLCV responses are rejected here so ``download_daily_candles``
+    can retry them as transient provider failures instead of passing them into
+    downstream quality checks.
+    """
 
     if frame is None or frame.empty:
         raise YahooDownloadError(f"empty Yahoo response for {yahoo_symbol}")
@@ -73,14 +78,28 @@ def normalize_yahoo_frame(frame: pd.DataFrame, yahoo_symbol: str) -> pd.DataFram
             f"Yahoo response for {yahoo_symbol} does not include timestamps"
         )
 
-    if "adj_close" not in normalized.columns:
-        normalized["adj_close"] = normalized["close"]
-
     normalized["timestamps"] = pd.to_datetime(
         normalized["timestamps"], errors="raise"
     )
     if normalized["timestamps"].dt.tz is not None:
         normalized["timestamps"] = normalized["timestamps"].dt.tz_localize(None)
+
+    for column in sorted(_REQUIRED_PRICE_COLUMNS):
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+
+    incomplete_rows = normalized[list(sorted(_REQUIRED_PRICE_COLUMNS))].isna().any(axis=1)
+    if incomplete_rows.any():
+        raise YahooDownloadError(
+            f"Yahoo response for {yahoo_symbol} contains "
+            f"{int(incomplete_rows.sum())} row(s) with missing OHLCV values"
+        )
+
+    if "adj_close" not in normalized.columns:
+        normalized["adj_close"] = normalized["close"]
+    else:
+        normalized["adj_close"] = pd.to_numeric(
+            normalized["adj_close"], errors="coerce"
+        ).fillna(normalized["close"])
 
     base_symbol = yahoo_symbol.removesuffix(".IS")
     normalized["symbol"] = base_symbol

@@ -4,7 +4,11 @@ import numpy as np, pandas as pd
 def _safe_corr(a,b,method="pearson"):
     frame=pd.DataFrame({"a":a,"b":b}).replace([np.inf,-np.inf],np.nan).dropna()
     if len(frame)<2 or frame.a.nunique()<2 or frame.b.nunique()<2: return np.nan
-    return float(frame.a.corr(frame.b,method=method))
+    if method == "spearman":
+        frame = frame.rank(method="average")
+    elif method != "pearson":
+        raise ValueError(f"unsupported correlation method: {method}")
+    return float(frame.a.corr(frame.b,method="pearson"))
 def compute_window_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
     rows=[]; keys=["symbol","candidate_month","forecast_origin","method"]
     for key,g in predictions.sort_values("horizon_step").groupby(keys,dropna=False):

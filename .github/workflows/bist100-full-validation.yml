@@ -1,0 +1,197 @@
+name: BIST 100 Full Zero-Shot Validation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/bist100-full-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install data dependencies
+        run: python -m pip install pandas==2.2.2 yfinance==1.5.1
+      - name: Download strict BIST 100 histories
+        run: |
+          python scripts/download_bist_yahoo.py \
+            --universe data/universes/xu100_2026_q3.csv \
+            --as-of 2026-08-02 \
+            --start 2015-01-01 \
+            --end 2026-08-03 \
+            --output data/bist/yahoo \
+            --retries 3 \
+            --sleep-seconds 1.5 \
+            --fail-on-error
+      - name: Validate complete data manifest
+        run: |
+          python - <<'PY'
+          import json
+          manifest = json.load(open("data/bist/yahoo/manifest.json"))
+          summary = manifest["summary"]
+          assert summary == {"requested": 100, "succeeded": 100, "failed": 0}, summary
+          assert len(manifest["successes"]) == 100
+          print(summary)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-eval-data-${{ github.run_id }}
+          path: data/bist/yahoo
+          retention-days: 14
+          if-no-files-found: error
+
+  prepare-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install model resolver
+        run: python -m pip install huggingface_hub==0.33.1
+      - name: Resolve exact public Kronos assets
+        run: |
+          python scripts/resolve_kronos_assets.py \
+            --model-id NeoQuasar/Kronos-mini \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-2k \
+            --output .models/kronos
+      - name: Validate asset manifest
+        run: |
+          python - <<'PY'
+          import json
+          manifest = json.load(open(".models/kronos/asset_manifest.json"))
+          assert len(manifest["model_revision"]) == 40
+          assert len(manifest["tokenizer_revision"]) == 40
+          print(manifest["model_revision"])
+          print(manifest["tokenizer_revision"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-eval-model-${{ github.run_id }}
+          path: .models/kronos
+          retention-days: 14
+          if-no-files-found: error
+
+  evaluate:
+    needs: [prepare-data, prepare-model]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: full-eval-data-${{ github.run_id }}
+          path: .artifacts/bist100-zero-shot/data
+      - uses: actions/download-artifact@v4
+        with:
+          name: full-eval-model-${{ github.run_id }}
+          path: .models/kronos
+      - name: Run strict shard ${{ matrix.shard_index }}
+        run: |
+          MODEL_REVISION=$(python -c 'import json; print(json.load(open(".models/kronos/asset_manifest.json"))["model_revision"])')
+          TOKENIZER_REVISION=$(python -c 'import json; print(json.load(open(".models/kronos/asset_manifest.json"))["tokenizer_revision"])')
+          python scripts/evaluate_bist100_zero_shot.py \
+            --data-dir .artifacts/bist100-zero-shot/data/kronos \
+            --source-manifest .artifacts/bist100-zero-shot/data/manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/bist100-zero-shot/shard-${{ matrix.shard_index }} \
+            --start 2023-01-01 \
+            --end 2026-08-02 \
+            --model-id NeoQuasar/Kronos-mini \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-2k \
+            --model-path .models/kronos/model \
+            --tokenizer-path .models/kronos/tokenizer \
+            --model-revision "$MODEL_REVISION" \
+            --tokenizer-revision "$TOKENIZER_REVISION" \
+            --seed 20260802 \
+            --sample-count 1 \
+            --shard-count 10 \
+            --shard-index ${{ matrix.shard_index }} \
+            --strict
+      - name: Enforce completed shard
+        if: always()
+        run: test -f .artifacts/bist100-zero-shot/shard-${{ matrix.shard_index }}/COMPLETED
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-eval-shard-${{ matrix.shard_index }}
+          path: .artifacts/bist100-zero-shot/shard-${{ matrix.shard_index }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  reduce:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install reducer dependencies
+        run: python -m pip install numpy pandas
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: full-eval-shard-*
+          path: .artifacts/bist100-zero-shot/shards
+      - name: Reduce compatible shards
+        run: |
+          python scripts/reduce_bist100_zero_shot.py \
+            --shards-dir .artifacts/bist100-zero-shot/shards \
+            --expected-shards 10 \
+            --minimum-ranking-cohort 20 \
+            --output results/bist100-zero-shot
+      - name: Validate final output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("results/bist100-zero-shot")
+          assert (root / "COMPLETED").is_file()
+          summary = json.load(open(root / "summary.json"))
+          manifest = json.load(open(root / "run_manifest.json"))
+          assert len(manifest["symbols"]) == 100
+          assert summary["eligible_windows"] > 0
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Write workflow summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          summary = json.load(open("results/bist100-zero-shot/summary.json"))
+          manifest = json.load(open("results/bist100-zero-shot/run_manifest.json"))
+          print("# BIST 100 Full Zero-Shot Validation")
+          print(f"- Model revision: `{manifest['model_revision']}`")
+          print(f"- Tokenizer revision: `{manifest['tokenizer_revision']}`")
+          for key, value in summary.items():
+              print(f"- {key}: {value}")
+          print("\n> Research-only, survivorship-biased evaluation; not investment advice.")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bist100-full-zero-shot-${{ github.run_id }}
+          path: results/bist100-zero-shot
+          retention-days: 30
+          if-no-files-found: error

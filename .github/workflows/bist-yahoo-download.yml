@@ -1,0 +1,94 @@
+name: BIST Yahoo Data Download
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-download.yml"
+      - "bist_data/**"
+      - "scripts/download_bist_yahoo.py"
+      - "tests/bist_data/**"
+      - "data/universes/**"
+      - "requirements*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install BIST pipeline dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run BIST pipeline tests
+        run: python -m pytest tests/bist_data -v
+
+      - name: Download BIST 100 daily candles
+        id: download
+        continue-on-error: true
+        run: |
+          python scripts/download_bist_yahoo.py \
+            --universe data/universes/xu100_2026_q3.csv \
+            --as-of 2026-08-02 \
+            --start 2015-01-01 \
+            --end 2026-08-03 \
+            --output data/bist/yahoo \
+            --retries 3 \
+            --sleep-seconds 1.5 \
+            --fail-on-error
+
+      - name: Print download manifest summary
+        if: always()
+        run: |
+          if [ -f data/bist/yahoo/manifest.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("data/bist/yahoo/manifest.json").read_text())
+          print("Summary:")
+          print(json.dumps(manifest["summary"], indent=2))
+          print("Quality:")
+          print(json.dumps(manifest["quality"], indent=2))
+          for item in manifest["successes"]:
+              if item["ohlc_repair_count"]:
+                  print(f"Audited repairs for {item['symbol']}:")
+                  print(json.dumps(item["ohlc_repairs"], indent=2))
+          if manifest["failures"]:
+              print("Failed symbols:")
+              for failure in manifest["failures"]:
+                  print(f"- {failure['symbol']}: {failure['error_type']}: {failure['error']}")
+          PY
+          else
+            echo "Manifest was not generated."
+            exit 1
+          fi
+
+      - name: Upload BIST Yahoo data artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bist-yahoo-2026-08-02
+          path: data/bist/yahoo
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce complete download
+        if: steps.download.outcome != 'success'
+        run: exit 1

@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.pytest_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -48,6 +49,9 @@ Desktop.ini
 *.parquet
 *.h5
 *.hdf5
+
+# Generated BIST research data
+data/bist/
 
 # Model files (large files)
 *.pth

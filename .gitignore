@@ -58,6 +58,13 @@ results/bist100-zero-shot/
 .artifacts/bist100-zero-shot/
 .models/kronos/
 
+# Generated adjusted benchmark assets
+results/bist100-adjusted-benchmark/
+.artifacts/bist100-adjusted-benchmark/
+.models/kronos-mini/
+.models/kronos-small/
+data/bist/adjustment-factors/
+
 # Model files (large files)
 *.pth
 *.pt

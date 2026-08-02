@@ -179,8 +179,12 @@ def test_two_mode_shards_reduce_to_completed_result(tmp_path):
         bootstrap_confidence=0.9,
         bootstrap_seed=1,
     )
+    assert summary["symbols_requested"] == 2
     assert summary["symbols_evaluated"] == 2
     assert summary["invalid_model_output_counts"] == {}
+    run_manifest = json.loads((output / "run_manifest.json").read_text())
+    assert run_manifest["symbols"] == ["AAA", "BBB"]
+    assert run_manifest["evaluated_symbols"] == ["AAA", "BBB"]
     assert (output / "COMPLETED").is_file()
     assert (output / "bootstrap_intervals.csv").is_file()
     assert "Rejected model outputs" in (output / "report.md").read_text()

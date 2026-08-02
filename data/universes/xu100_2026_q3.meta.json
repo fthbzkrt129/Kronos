@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "index_code": "XU100",
+  "index_name": "BIST 100",
+  "period": "2026-Q3",
+  "valid_from": "2026-07-01",
+  "valid_to": "2026-09-30",
+  "constituent_count": 100,
+  "compiled_at": "2026-08-02",
+  "compiled_for": "Personal research and Kronos zero-shot evaluation",
+  "sources": [
+    {
+      "publisher": "Borsa Istanbul",
+      "description": "BIST Stock Indices 2026 third-quarter periodic review announcement",
+      "url": "https://www.borsaistanbul.com/en/"
+    },
+    {
+      "publisher": "Borsa Istanbul",
+      "description": "BIST 100 index information page",
+      "url": "https://www.borsaistanbul.com/en/index/xu100"
+    },
+    {
+      "publisher": "Public market listings",
+      "description": "Current constituent names and symbol cross-checks; renamed symbols were checked against KAP company pages"
+    }
+  ],
+  "known_limitations": [
+    "This is a manually verified current-quarter snapshot, not a complete historical membership database.",
+    "The file must not be reused for dates outside its validity interval.",
+    "Licensed Borsa Istanbul data is required before production trading or commercial redistribution."
+  ]
+}

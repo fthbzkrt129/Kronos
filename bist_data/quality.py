@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 
@@ -11,6 +13,73 @@ _PRICE_COLUMNS = ["open", "high", "low", "close"]
 
 class CandleQualityError(ValueError):
     """Raised when candle data violates the research data contract."""
+
+
+def repair_ohlc_envelope(
+    frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    """Return a model-ready copy with the smallest valid OHLC envelope.
+
+    Yahoo occasionally publishes a daily close just outside the reported high/low
+    range. The raw provider frame must still be preserved by callers. This helper
+    only expands ``high`` or ``low`` enough to contain open and close, and returns
+    a complete audit record for every changed cell.
+    """
+
+    required = {"timestamps", *_PRICE_COLUMNS}
+    missing = required - set(frame.columns)
+    if missing:
+        raise CandleQualityError(
+            "missing candle columns for OHLC repair: " + ", ".join(sorted(missing))
+        )
+
+    repaired = frame.copy()
+    try:
+        repaired["timestamps"] = pd.to_datetime(
+            repaired["timestamps"], errors="raise"
+        )
+    except (TypeError, ValueError) as exc:
+        raise CandleQualityError("timestamps contain invalid values") from exc
+
+    for column in _PRICE_COLUMNS:
+        repaired[column] = pd.to_numeric(repaired[column], errors="coerce")
+
+    repairs: list[dict[str, Any]] = []
+    usable = repaired[_PRICE_COLUMNS].notna().all(axis=1)
+
+    required_high = repaired[["open", "close", "low"]].max(axis=1)
+    bad_high = usable & (repaired["high"] < required_high)
+    for index in repaired.index[bad_high]:
+        original = float(repaired.at[index, "high"])
+        replacement = float(required_high.at[index])
+        repairs.append(
+            {
+                "timestamp": repaired.at[index, "timestamps"].date().isoformat(),
+                "column": "high",
+                "original_value": original,
+                "repaired_value": replacement,
+                "reason": "expand_ohlc_envelope",
+            }
+        )
+        repaired.at[index, "high"] = replacement
+
+    required_low = repaired[["open", "close", "high"]].min(axis=1)
+    bad_low = usable & (repaired["low"] > required_low)
+    for index in repaired.index[bad_low]:
+        original = float(repaired.at[index, "low"])
+        replacement = float(required_low.at[index])
+        repairs.append(
+            {
+                "timestamp": repaired.at[index, "timestamps"].date().isoformat(),
+                "column": "low",
+                "original_value": original,
+                "repaired_value": replacement,
+                "reason": "expand_ohlc_envelope",
+            }
+        )
+        repaired.at[index, "low"] = replacement
+
+    return repaired, repairs
 
 
 def validate_candles(frame: pd.DataFrame) -> pd.DataFrame:

@@ -1,0 +1,143 @@
+name: BIST Adjusted Benchmark Smoke Validation
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/bist-adjusted-benchmark-smoke-validation.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements.txt
+      - name: Download immutable verified source artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .artifacts/source
+          gh api repos/${{ github.repository }}/actions/artifacts/8826613095/zip > /tmp/bist-source.zip
+          echo "51578854a6fc341f34bff8bea4cf8f57d900006f2a35e2a34e983d6389933f2c  /tmp/bist-source.zip" | sha256sum -c -
+          unzip -q /tmp/bist-source.zip -d .artifacts/source
+          test -f .artifacts/source/manifest.json
+          test "$(find .artifacts/source/raw -name '*.csv' | wc -l)" = "100"
+      - name: Validate THYAO and ASELS factor provenance
+        run: |
+          python scripts/validate_bist_adjustment_factors.py \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --source-artifact-id "8826613095" \
+            --source-artifact-digest "51578854a6fc341f34bff8bea4cf8f57d900006f2a35e2a34e983d6389933f2c" \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/factors \
+            --symbols THYAO ASELS \
+            --strict
+      - name: Resolve exact mini assets
+        run: |
+          python scripts/resolve_kronos_assets.py \
+            --model-id NeoQuasar/Kronos-mini \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-2k \
+            --output .models/kronos-mini
+      - name: Resolve exact small assets
+        run: |
+          python scripts/resolve_kronos_assets.py \
+            --model-id NeoQuasar/Kronos-small \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-base \
+            --output .models/kronos-small
+      - name: Run raw-mini, adjusted-mini, and adjusted baselines
+        run: |
+          MODEL_REV=$(python -c 'import json; print(json.load(open(".models/kronos-mini/asset_manifest.json"))["model_revision"])')
+          TOKENIZER_REV=$(python -c 'import json; print(json.load(open(".models/kronos-mini/asset_manifest.json"))["tokenizer_revision"])')
+          python scripts/evaluate_bist100_adjusted_benchmark.py \
+            --mode mini-pair \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/mini/shard-0 \
+            --start 2023-01-01 --end 2023-02-28 \
+            --calendar-coverage 0.8 --minimum-ranking-cohort 2 \
+            --model-path .models/kronos-mini/model \
+            --tokenizer-path .models/kronos-mini/tokenizer \
+            --model-revision "$MODEL_REV" --tokenizer-revision "$TOKENIZER_REV" \
+            --device cpu --seed 20260802 --sample-count 1 \
+            --symbols THYAO ASELS --strict
+      - name: Run adjusted-small
+        run: |
+          MODEL_REV=$(python -c 'import json; print(json.load(open(".models/kronos-small/asset_manifest.json"))["model_revision"])')
+          TOKENIZER_REV=$(python -c 'import json; print(json.load(open(".models/kronos-small/asset_manifest.json"))["tokenizer_revision"])')
+          python scripts/evaluate_bist100_adjusted_benchmark.py \
+            --mode small \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/small/shard-0 \
+            --start 2023-01-01 --end 2023-02-28 \
+            --calendar-coverage 0.8 --minimum-ranking-cohort 2 \
+            --model-id NeoQuasar/Kronos-small \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-base \
+            --model-path .models/kronos-small/model \
+            --tokenizer-path .models/kronos-small/tokenizer \
+            --model-revision "$MODEL_REV" --tokenizer-revision "$TOKENIZER_REV" \
+            --device cpu --seed 20260802 --sample-count 1 \
+            --symbols THYAO ASELS --strict
+      - name: Reduce smoke benchmark
+        run: |
+          python scripts/reduce_bist100_adjusted_benchmark.py \
+            --mini-shards-dir .artifacts/mini \
+            --small-shards-dir .artifacts/small \
+            --expected-shards 1 \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --output results/bist-adjusted-smoke \
+            --minimum-ranking-cohort 2 \
+            --bootstrap-draws 1000 \
+            --bootstrap-confidence 0.95 \
+            --bootstrap-seed 20260802
+      - name: Validate real-model smoke contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("results/bist-adjusted-smoke")
+          assert (root / "COMPLETED").is_file()
+          predictions = pd.read_csv(root / "predictions.csv")
+          assert set(predictions["symbol"]) == {"THYAO", "ASELS"}
+          assert predictions["forecast_origin"].nunique() == 2
+          assert set(predictions["experiment_arm"]) == {
+              "raw-mini", "adjusted-mini", "adjusted-small", "adjusted-baselines"
+          }
+          assert predictions.groupby(
+              ["symbol", "forecast_origin", "target_timestamp"]
+          )["actual_close"].nunique().max() == 1
+          intervals = pd.read_csv(root / "bootstrap_intervals.csv")
+          assert set(intervals["cluster_type"]) == {"symbol", "forecast_origin"}
+          summary = json.load(open(root / "summary.json"))
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bist-adjusted-real-smoke-${{ github.run_id }}
+          path: |
+            results/bist-adjusted-smoke
+            .artifacts/factors
+            .artifacts/mini
+            .artifacts/small
+            .models/kronos-mini/asset_manifest.json
+            .models/kronos-small/asset_manifest.json
+          retention-days: 14
+          if-no-files-found: warn

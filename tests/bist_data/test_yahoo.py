@@ -18,7 +18,7 @@ def valid_response() -> pd.DataFrame:
             "Low": [9.0],
             "Close": [11.0],
             "Adj Close": [10.5],
-            "Volume": [100],
+            "Volume": [100.0],
         },
         index=pd.DatetimeIndex(["2026-07-30"], name="Date"),
     )
@@ -106,7 +106,7 @@ def test_download_daily_candles_retries_incomplete_provider_frame():
         calls[symbol] += 1
         if calls[symbol] == 1:
             incomplete = valid_response()
-            incomplete.loc[:, "Volume"] = pd.NA
+            incomplete.loc[:, "Volume"] = float("nan")
             return incomplete
         return valid_response()
 
@@ -125,7 +125,7 @@ def test_download_daily_candles_retries_incomplete_provider_frame():
 
 def test_normalize_yahoo_frame_rejects_missing_ohlcv_values():
     frame = valid_response()
-    frame.loc[:, "Close"] = pd.NA
+    frame.loc[:, "Close"] = float("nan")
 
     with pytest.raises(YahooDownloadError, match="missing OHLCV"):
         normalize_yahoo_frame(frame, "THYAO.IS")

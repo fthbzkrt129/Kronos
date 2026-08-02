@@ -1,7 +1,12 @@
 import pandas as pd
 import pytest
 
-from bist_data.quality import CandleQualityError, to_kronos_frame, validate_candles
+from bist_data.quality import (
+    CandleQualityError,
+    repair_ohlc_envelope,
+    to_kronos_frame,
+    validate_candles,
+)
 
 
 def valid_frame() -> pd.DataFrame:
@@ -42,6 +47,57 @@ def test_validate_candles_rejects_negative_volume():
 
     with pytest.raises(CandleQualityError, match="volume"):
         validate_candles(frame)
+
+
+def test_repair_ohlc_envelope_expands_low_for_miatk_anomaly():
+    frame = valid_frame().iloc[[0]].copy()
+    frame.loc[:, "timestamps"] = pd.to_datetime(["2022-06-27"])
+    frame.loc[:, ["open", "high", "low"]] = 2.506153
+    frame.loc[:, "close"] = 2.504615
+
+    repaired, repairs = repair_ohlc_envelope(frame)
+
+    assert repaired.loc[0, "low"] == pytest.approx(2.504615)
+    assert repairs == [
+        {
+            "timestamp": "2022-06-27",
+            "column": "low",
+            "original_value": pytest.approx(2.506153),
+            "repaired_value": pytest.approx(2.504615),
+            "reason": "expand_ohlc_envelope",
+        }
+    ]
+    validate_candles(repaired)
+
+
+def test_repair_ohlc_envelope_expands_high_for_psgyo_anomaly():
+    frame = valid_frame().iloc[[0]].copy()
+    frame.loc[:, "timestamps"] = pd.to_datetime(["2022-06-27"])
+    frame.loc[:, ["open", "high", "low"]] = 0.541301
+    frame.loc[:, "close"] = 0.554344
+
+    repaired, repairs = repair_ohlc_envelope(frame)
+
+    assert repaired.loc[0, "high"] == pytest.approx(0.554344)
+    assert repairs == [
+        {
+            "timestamp": "2022-06-27",
+            "column": "high",
+            "original_value": pytest.approx(0.541301),
+            "repaired_value": pytest.approx(0.554344),
+            "reason": "expand_ohlc_envelope",
+        }
+    ]
+    validate_candles(repaired)
+
+
+def test_repair_ohlc_envelope_leaves_valid_candles_unchanged():
+    frame = valid_frame()
+
+    repaired, repairs = repair_ohlc_envelope(frame)
+
+    pd.testing.assert_frame_equal(repaired, frame)
+    assert repairs == []
 
 
 def test_to_kronos_frame_generates_amount_from_typical_price():

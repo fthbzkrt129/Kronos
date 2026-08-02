@@ -1,0 +1,112 @@
+name: BIST Two-Symbol Kronos Smoke
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/bist-two-symbol-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements.txt
+      - name: Create two-symbol research universe
+        run: |
+          cat > data/universes/bist_two_symbol_smoke.csv <<'CSV'
+          symbol,name,valid_from,valid_to
+          THYAO,Turk Hava Yollari,2026-07-01,2026-09-30
+          ASELS,Aselsan,2026-07-01,2026-09-30
+          CSV
+      - name: Download two Yahoo histories
+        run: |
+          python scripts/download_bist_yahoo.py \
+            --universe data/universes/bist_two_symbol_smoke.csv \
+            --as-of 2026-08-02 \
+            --start 2021-01-01 \
+            --end 2023-03-10 \
+            --symbols THYAO ASELS \
+            --output data/bist/smoke \
+            --retries 3 \
+            --sleep-seconds 1.5 \
+            --fail-on-error
+      - name: Resolve exact Kronos-mini assets
+        run: |
+          python scripts/resolve_kronos_assets.py \
+            --model-id NeoQuasar/Kronos-mini \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-2k \
+            --output .models/kronos
+      - name: Run two-symbol two-cohort smoke
+        run: |
+          MODEL_REVISION=$(python -c 'import json; print(json.load(open(".models/kronos/asset_manifest.json"))["model_revision"])')
+          TOKENIZER_REVISION=$(python -c 'import json; print(json.load(open(".models/kronos/asset_manifest.json"))["tokenizer_revision"])')
+          python scripts/evaluate_bist100_zero_shot.py \
+            --data-dir data/bist/smoke/kronos \
+            --source-manifest data/bist/smoke/manifest.json \
+            --universe data/universes/bist_two_symbol_smoke.csv \
+            --output results/bist-two-symbol-smoke \
+            --start 2023-01-01 \
+            --end 2023-02-28 \
+            --lookback 400 \
+            --horizon 5 \
+            --calendar-coverage 1.0 \
+            --minimum-ranking-cohort 2 \
+            --model-id NeoQuasar/Kronos-mini \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-2k \
+            --model-path .models/kronos/model \
+            --tokenizer-path .models/kronos/tokenizer \
+            --model-revision "$MODEL_REVISION" \
+            --tokenizer-revision "$TOKENIZER_REVISION" \
+            --device cpu \
+            --seed 20260802 \
+            --sample-count 1 \
+            --symbols THYAO ASELS \
+            --strict
+      - name: Validate smoke contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("results/bist-two-symbol-smoke")
+          assert (root / "COMPLETED").is_file()
+          manifest = json.load(open(root / "shard_manifest.json"))
+          predictions = pd.read_csv(root / "predictions.csv")
+          assert manifest["eligible_windows"] == 4, manifest
+          assert set(predictions["symbol"]) == {"THYAO", "ASELS"}
+          assert set(predictions["method"]) == {"kronos", "last_close", "momentum_20", "linear_trend_20"}
+          assert predictions["forecast_origin"].nunique() == 2
+          assert len(predictions) == 80
+          summary = {
+              "symbols": sorted(predictions["symbol"].unique().tolist()),
+              "forecast_origins": sorted(predictions["forecast_origin"].unique().tolist()),
+              "eligible_windows": manifest["eligible_windows"],
+              "prediction_rows": len(predictions),
+              "model_revision": manifest["model_revision"],
+              "tokenizer_revision": manifest["tokenizer_revision"],
+          }
+          (root / "smoke_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bist-two-symbol-smoke-${{ github.run_id }}
+          path: |
+            results/bist-two-symbol-smoke
+            data/bist/smoke/manifest.json
+            .models/kronos/asset_manifest.json
+          retention-days: 14
+          if-no-files-found: warn

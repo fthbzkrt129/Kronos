@@ -1,6 +1,16 @@
 name: BIST Yahoo Data Download
 
 on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-download.yml"
+      - "bist_data/**"
+      - "scripts/download_bist_yahoo.py"
+      - "tests/bist_data/**"
+      - "data/universes/**"
+      - "requirements*.txt"
   workflow_dispatch:
 
 permissions:

@@ -164,3 +164,40 @@ def test_invalid_small_window_becomes_explicit_skip():
     assert result.skips.iloc[0].reason_code == "invalid_model_output"
     assert "arm=adjusted-small" in result.skips.iloc[0].reason_detail
     assert result.manifest["invalid_model_outputs"]["adjusted-small"] == 1
+
+
+def test_invalid_baseline_window_is_excluded_without_clipping(monkeypatch):
+    def fake_baselines(context, horizon):
+        last = np.repeat(float(context.close.iloc[-1]), horizon)
+        return {
+            "last_close": last,
+            "momentum_20": last + 1.0,
+            "linear_trend_20": np.array([4.0, 3.0, 2.0, 1.0, -0.5]),
+        }
+
+    monkeypatch.setattr("bist_eval.benchmark.forecast_baselines", fake_baselines)
+    frames, cohorts = fixture()
+    result = run_mini_pair_shard(
+        raw_frames=frames,
+        cohorts=cohorts,
+        symbols=["AAA"],
+        config=AdjustedBenchmarkConfig(),
+        adapter=Adapter(),
+    )
+
+    baseline_methods = set(
+        result.predictions.loc[
+            result.predictions.experiment_arm == "adjusted-baselines", "method"
+        ]
+    )
+    assert baseline_methods == {"last_close", "momentum_20"}
+    assert (result.predictions.predicted_close > 0).all()
+    rejected = result.skips[
+        result.skips.reason_code == "invalid_baseline_output"
+    ]
+    assert len(rejected) == 1
+    assert "method=linear_trend_20" in rejected.iloc[0].reason_detail
+    assert "-0.5" in rejected.iloc[0].reason_detail
+    assert result.manifest["invalid_baseline_outputs"] == {
+        "linear_trend_20": 1
+    }

@@ -6,6 +6,16 @@ on:
       - feature/bist-yahoo-data-pipeline
     paths:
       - ".github/workflows/bist-yahoo-download.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-download.yml"
+      - "bist_data/**"
+      - "scripts/download_bist_yahoo.py"
+      - "tests/bist_data/**"
+      - "data/universes/**"
+      - "requirements*.txt"
   workflow_dispatch:
 
 permissions:
@@ -57,7 +67,14 @@ jobs:
           from pathlib import Path
 
           manifest = json.loads(Path("data/bist/yahoo/manifest.json").read_text())
+          print("Summary:")
           print(json.dumps(manifest["summary"], indent=2))
+          print("Quality:")
+          print(json.dumps(manifest["quality"], indent=2))
+          for item in manifest["successes"]:
+              if item["ohlc_repair_count"]:
+                  print(f"Audited repairs for {item['symbol']}:")
+                  print(json.dumps(item["ohlc_repairs"], indent=2))
           if manifest["failures"]:
               print("Failed symbols:")
               for failure in manifest["failures"]:

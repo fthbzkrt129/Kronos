@@ -44,6 +44,15 @@ def _target_fp(target):
     ).hexdigest()
 
 
+def _safe_values(values):
+    return [float(value) if np.isfinite(value) else None for value in values]
+
+
+def _is_valid_positive_prediction(values):
+    array = np.asarray(values, dtype=float)
+    return bool(np.isfinite(array).all() and (array > 0).all())
+
+
 def _prediction_rows(
     arm,
     method,
@@ -134,6 +143,21 @@ def _failure_skip(failure: PredictionFailure, arm: str, lookback: int, horizon: 
     }
 
 
+def _baseline_failure_skip(bundle, method, prediction, lookback, horizon):
+    return {
+        "symbol": bundle.symbol,
+        "candidate_month": bundle.candidate_month,
+        "reason_code": "invalid_baseline_output",
+        "reason_detail": (
+            f"arm=adjusted-baselines; method={method}; "
+            "nonpositive_or_nonfinite_close="
+            + json.dumps(_safe_values(np.asarray(prediction, dtype=float)), separators=(",", ":"))
+        ),
+        "available_history_rows": lookback,
+        "available_target_rows": horizon,
+    }
+
+
 def run_mini_pair_shard(
     *, raw_frames, cohorts, symbols, config, adapter, manifest_base=None
 ):
@@ -147,6 +171,7 @@ def run_mini_pair_shard(
     )
     rows = []
     invalid_counts = {"raw-mini": 0, "adjusted-mini": 0}
+    invalid_baselines = defaultdict(int)
 
     for _, items in sorted(groups.items(), key=lambda item: item[0][0]):
         raw_windows = [
@@ -216,6 +241,18 @@ def run_mini_pair_shard(
             for method, prediction in forecast_baselines(
                 rebased, config.horizon
             ).items():
+                if not _is_valid_positive_prediction(prediction):
+                    skip_rows.append(
+                        _baseline_failure_skip(
+                            bundle,
+                            method,
+                            prediction,
+                            config.lookback,
+                            config.horizon,
+                        )
+                    )
+                    invalid_baselines[method] += 1
+                    continue
                 rows.extend(
                     _prediction_rows(
                         "adjusted-baselines",
@@ -252,6 +289,7 @@ def run_mini_pair_shard(
         if len(window_metrics)
         else 0,
         "invalid_model_outputs": invalid_counts,
+        "invalid_baseline_outputs": dict(sorted(invalid_baselines.items())),
     }
     return BenchmarkShardResult(predictions, window_metrics, skips, manifest)
 

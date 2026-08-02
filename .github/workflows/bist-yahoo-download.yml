@@ -6,6 +6,11 @@ on:
       - feature/bist-yahoo-data-pipeline
     paths:
       - ".github/workflows/bist-yahoo-download.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-download.yml"
   workflow_dispatch:
 
 permissions:

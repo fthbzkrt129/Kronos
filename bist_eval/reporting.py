@@ -235,7 +235,8 @@ def write_reduced_output(
 
 def _benchmark_report(summary):
     questions = summary.get("questions", {})
-    invalid_counts = summary.get("invalid_model_output_counts", {})
+    invalid_model_counts = summary.get("invalid_model_output_counts", {})
+    invalid_baseline_counts = summary.get("invalid_baseline_output_counts", {})
     lines = [
         "# Paired adjusted-price zero-shot benchmark of Kronos-mini and "
         "Kronos-small on the 2026 Q3 BIST 100 constituent snapshot over 2023-2026",
@@ -249,15 +250,22 @@ def _benchmark_report(summary):
     for question, answer in questions.items():
         lines.append(f"- {question}: {answer}")
     lines.extend(["", "## Rejected model outputs"])
-    if invalid_counts:
-        for arm, count in sorted(invalid_counts.items()):
+    if invalid_model_counts:
+        for arm, count in sorted(invalid_model_counts.items()):
             lines.append(f"- {arm}: {count} window(s)")
     else:
         lines.append("- None")
+    lines.extend(["", "## Rejected baseline outputs"])
+    if invalid_baseline_counts:
+        for method, count in sorted(invalid_baseline_counts.items()):
+            lines.append(f"- {method}: {count} window(s)")
+    else:
+        lines.append("- None")
     lines.append(
-        "Invalid sampled outputs were excluded per arm and window without "
-        "clipping, imputation, retrying, or changing the seed. Paired conclusions "
-        "use only windows present in both compared arms."
+        "Invalid sampled model or deterministic baseline outputs were excluded "
+        "per arm, method, and window without clipping, imputation, retrying, or "
+        "changing the seed. Paired conclusions use only windows present in both "
+        "compared methods."
     )
     lines.extend(
         [

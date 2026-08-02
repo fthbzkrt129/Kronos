@@ -1,20 +1,20 @@
-# BIST 100 Adjusted-Price Kronos Benchmark Design
+# BIST 100 Origin-Rebased Kronos Benchmark Design
 
 ## Status
 
-Approved for specification on 2026-08-02. This document defines a research-only evaluation milestone. It does not authorize fine-tuning, portfolio deployment, broker integration, paper trading, or live trading.
+Approved for specification on 2026-08-02 and revised during specification review to remove a potential corporate-action look-ahead path. This document defines a research-only evaluation milestone. It does not authorize fine-tuning, portfolio deployment, broker integration, paper trading, or live trading.
 
 ## Purpose
 
 Determine whether two controlled changes improve the previously completed BIST 100 zero-shot evaluation:
 
-1. Replacing raw Yahoo OHLC prices with a corporate-action-adjusted OHLC view derived from `adj_close / close`.
-2. Replacing `NeoQuasar/Kronos-mini` with `NeoQuasar/Kronos-small` while preserving the same evaluation population, dates, lookback, horizon, baselines, seeds, and reporting rules.
+1. Replacing raw OHLC context with an origin-rebased corporate-action-adjusted view derived from Yahoo `adj_close / close` factors without exposing future factors to the predictor.
+2. Replacing `NeoQuasar/Kronos-mini` with `NeoQuasar/Kronos-small` while preserving the same population, forecast origins, lookback, horizon, sampling parameters, and scoring targets.
 
-The benchmark must answer three separate questions without conflating them:
+The benchmark must answer three separate questions:
 
-- Does adjusted data improve Kronos-mini relative to its raw-price reference run?
-- Does Kronos-small outperform Kronos-mini when both use the same adjusted data?
+- Does origin-rebased adjusted context improve Kronos-mini relative to raw-context Kronos-mini when both are scored against the same adjusted target?
+- Does Kronos-small outperform Kronos-mini when both use the same origin-rebased adjusted context?
 - Does either adjusted Kronos configuration beat transparent baselines on return error, direction, and cross-sectional ranking?
 
 Results are research evidence, not investment advice.
@@ -23,11 +23,19 @@ Results are research evidence, not investment advice.
 
 The report must be named and described as:
 
-> Paired adjusted-price zero-shot benchmark of Kronos-mini and Kronos-small on the 2026 Q3 BIST 100 constituent snapshot over 2023-2026.
+> Paired origin-rebased zero-shot benchmark of Kronos-mini and Kronos-small on the 2026 Q3 BIST 100 constituent snapshot over 2023-2026.
 
 It must not be described as a historical BIST 100 index backtest. The repository contains the 2026 Q3 constituent snapshot, not point-in-time historical index membership. Applying that snapshot backward introduces survivorship and selection bias.
 
-The adjusted-price view is a Yahoo-derived research transformation. It is not equivalent to an official licensed Borsa Istanbul corporate-action history.
+The origin-rebased view is a Yahoo-derived research transformation. It is not equivalent to an official licensed Borsa Istanbul corporate-action history or total-return index.
+
+## Why a Static Adjusted File Is Forbidden
+
+Yahoo `adj_close` is a provider-maintained historical series that may reflect corporate actions occurring after an earlier forecast origin. Building one static historical OHLC file with `adj_close / close` and then using it for every past forecast could therefore expose later adjustment information to earlier model contexts.
+
+This milestone must not create a single static adjusted-price CSV for model input.
+
+Instead, every eligible forecast window receives its own transformation anchored at that window's forecast origin. The origin factor normalizes away adjustment components common to both the historical row and the origin. Target factors are applied only after prediction, for scoring.
 
 ## Scope
 
@@ -35,24 +43,28 @@ The adjusted-price view is a Yahoo-derived research transformation. It is not eq
 
 - The 100 symbols in `data/universes/xu100_2026_q3.csv`.
 - The immutable, previously verified Yahoo research artifact containing 100 raw symbol CSV files and its manifest.
-- Raw reference results from the completed Kronos-mini benchmark when configuration and source fingerprints match.
-- A derived adjusted OHLCVA dataset built from the raw artifact.
+- A validated per-row factor series derived from raw `adj_close / close`.
+- Window-specific origin-rebased adjusted contexts.
+- A common origin-rebased adjusted target used to score every model arm and baseline.
 - Evaluation dates from 2023-01-01 through the last completed candle on or before 2026-08-02.
 - A 400-trading-day lookback window.
 - A five-trading-day forecast horizon.
 - The same common monthly forecast origins and common five-date targets as the original benchmark.
-- `NeoQuasar/Kronos-mini` with `NeoQuasar/Kronos-Tokenizer-2k`.
-- `NeoQuasar/Kronos-small` with `NeoQuasar/Kronos-Tokenizer-base`.
-- Deterministic baselines evaluated on the same adjusted series.
-- Paired per-window comparisons and bootstrap confidence intervals.
-- CSV, JSON, and Markdown outputs with complete run manifests.
-- Network-free tests for all transformation, metric, pairing, and reducer logic.
+- Raw-context `NeoQuasar/Kronos-mini` as the controlled reference arm.
+- Adjusted-context `NeoQuasar/Kronos-mini`.
+- Adjusted-context `NeoQuasar/Kronos-small`.
+- `NeoQuasar/Kronos-Tokenizer-2k` for mini and `NeoQuasar/Kronos-Tokenizer-base` for small.
+- Deterministic adjusted-context baselines.
+- Paired per-window comparisons and clustered bootstrap confidence intervals.
+- CSV, JSON, and Markdown outputs with complete provenance.
+- Network-free tests for transformation, leakage prevention, metrics, pairing, and reducer logic.
 - A separately triggered real-model benchmark workflow.
 
 ### Excluded
 
 - Fine-tuning any Kronos model or tokenizer.
 - Kronos-base or Kronos-large evaluation.
+- A static adjusted model-input dataset.
 - Historical point-in-time BIST 100 reconstruction.
 - Licensed corporate-action data ingestion.
 - Intraday prediction.
@@ -62,108 +74,161 @@ The adjusted-price view is a Yahoo-derived research transformation. It is not eq
 
 ## Experimental Arms
 
-The benchmark contains three logically distinct arms:
+### Arm R-Mini: Raw Context, Mini Model
 
-### Arm R: Raw Mini Reference
-
-- Data view: raw Yahoo OHLCVA used by the completed benchmark.
+- Context view: raw Yahoo OHLCVA.
 - Model: `NeoQuasar/Kronos-mini`.
 - Tokenizer: `NeoQuasar/Kronos-Tokenizer-2k`.
-- Purpose: frozen reference only.
+- Scoring target: common origin-rebased adjusted target.
+- Purpose: isolate the effect of adjusted context.
 
-The preferred implementation reuses the prior completed artifact instead of rerunning Arm R. Reuse is permitted only when the source-data fingerprint, universe, monthly cohorts, model revision, tokenizer revision, lookback, horizon, sampling parameters, and seed exactly match the recorded reference manifest. If any required field differs, the raw arm must be rerun or the paired raw-versus-adjusted comparison must be marked unavailable.
+The prior full benchmark artifact may be reused only at the prediction level. Its old metrics used raw targets and are not valid for this benchmark's common adjusted target.
 
-### Arm A-Mini: Adjusted Mini
+Prior predictions may be reused only when all of the following match exactly:
 
-- Data view: adjusted OHLCVA derived from the verified raw Yahoo artifact.
+- source-data fingerprint
+- universe and symbol order
+- canonical monthly cohorts
+- model and tokenizer revisions
+- lookback and horizon
+- temperature, top-p, sample count, and seed
+- prediction schema
+
+If compatible predictions are unavailable, Arm R-Mini must be rerun. Old aggregate metrics must never be imported as if they were comparable.
+
+### Arm A-Mini: Origin-Rebased Context, Mini Model
+
+- Context view: window-specific origin-rebased adjusted OHLCVA.
 - Model: `NeoQuasar/Kronos-mini`.
 - Tokenizer: `NeoQuasar/Kronos-Tokenizer-2k`.
-- Purpose: isolate the effect of the data transformation.
+- Scoring target: the same origin-rebased adjusted target.
+- Purpose: isolate the context transformation.
 
-### Arm A-Small: Adjusted Small
+### Arm A-Small: Origin-Rebased Context, Small Model
 
-- Data view: exactly the same adjusted OHLCVA files used by Arm A-Mini.
+- Context view: exactly the same transformed windows used by A-Mini.
 - Model: `NeoQuasar/Kronos-small`.
 - Tokenizer: `NeoQuasar/Kronos-Tokenizer-base`.
-- Purpose: isolate the effect of model capacity and tokenizer family on the adjusted data.
+- Scoring target: the same origin-rebased adjusted target.
+- Purpose: isolate the model-tokenizer system change.
 
-All paired conclusions must use only windows present in both compared arms. Missing or skipped windows must never be imputed.
+All conclusions must use only symbol-windows present in both compared arms. Missing windows must not be imputed.
 
-## Adjusted OHLCVA Transformation
+## Factor Series Validation
 
-The source raw CSV must contain finite `open`, `high`, `low`, `close`, `adj_close`, and `volume` values for every retained row.
-
-For each row:
+For each raw symbol row:
 
 ```text
-adjustment_factor = adj_close / close
-adjusted_open      = open  * adjustment_factor
-adjusted_high      = high  * adjustment_factor
-adjusted_low       = low   * adjustment_factor
-adjusted_close     = close * adjustment_factor
-adjusted_volume    = volume
-adjusted_amount    = ((adjusted_high + adjusted_low + adjusted_close) / 3) * volume
+provider_factor_t = adj_close_t / close_t
 ```
 
-### Factor Rules
+Rules:
 
-- `close` must be strictly positive.
-- `adj_close` must be strictly positive.
-- `adjustment_factor` must be finite and strictly positive.
-- No forward fill, backward fill, interpolation, clipping, or median substitution is allowed.
-- A row failing any factor rule is fatal for that symbol in strict preparation mode.
-- The transformation must not read future rows when creating any individual row; the factor is computed only from fields already present on the same source row.
+- `open`, `high`, `low`, `close`, `adj_close`, and `volume` must be finite.
+- `close` and `adj_close` must be strictly positive.
+- `provider_factor_t` must be finite and strictly positive.
+- Timestamps must be unique and strictly increasing after normalization.
+- No forward fill, backward fill, interpolation, clipping, or substitution is allowed.
+- Invalid rows are fatal for that symbol in strict preparation mode.
 
-### OHLC Envelope
+The validated factor series is diagnostic input, not a model-ready adjusted file.
 
-After scaling, the adjusted frame must pass the repository's OHLC envelope contract:
+## Window-Specific Origin-Rebased Transformation
+
+For a forecast window with origin row `o`, define:
+
+```text
+relative_factor_t(o) = provider_factor_t / provider_factor_o
+```
+
+For every context row `t <= o`:
+
+```text
+rebased_open_t   = open_t  * relative_factor_t(o)
+rebased_high_t   = high_t  * relative_factor_t(o)
+rebased_low_t    = low_t   * relative_factor_t(o)
+rebased_close_t  = close_t * relative_factor_t(o)
+rebased_volume_t = volume_t
+rebased_amount_t = ((rebased_high_t + rebased_low_t + rebased_close_t) / 3) * volume_t
+```
+
+At the origin, `relative_factor_o(o) = 1`, so the rebased origin price equals the raw origin price. This gives every model arm and target a common origin scale.
+
+### Leakage Boundary
+
+The predictor and baseline functions may receive only:
+
+- rebased context rows through the origin
+- context timestamps
+- future target timestamps
+
+They must not receive:
+
+- target raw prices
+- target adjusted prices
+- target provider factors
+- target relative factors
+- future corporate-action diagnostics
+
+Target transformation occurs only after all predictions for that window are produced.
+
+### Common Scoring Target
+
+For each held-out target row `u > o`, calculate after prediction:
+
+```text
+relative_factor_u(o) = provider_factor_u / provider_factor_o
+actual_rebased_close_u = raw_close_u * relative_factor_u(o)
+```
+
+The same `actual_rebased_close_u` is used to score R-Mini, A-Mini, A-Small, and every baseline. This prevents different arms from being compared against different definitions of realized price.
+
+Provider adjustment components occurring after both `o` and `u` are expected to cancel in the factor ratio. This is a research assumption that must be stated in the report and independently validated before any production use.
+
+## OHLC and Amount Rules
+
+Each rebased context must pass the repository's OHLC envelope contract:
 
 - `high >= max(open, close, low)`
 - `low <= min(open, close, high)`
-- all price fields non-negative
+- all price fields strictly positive for model input
 - volume non-negative
-- timestamps unique and strictly increasing after normalization
 
-Floating-point noise may be handled only through the existing audited minimal envelope repair. Every changed cell must be recorded in the adjusted-data manifest. Silent repair is forbidden.
+Floating-point noise may be handled only through the existing audited minimal envelope repair. Silent repair is forbidden.
 
-### Volume and Amount
+Volume remains raw. The design does not reverse-adjust volume because the Yahoo artifact does not provide a separately verified split-volume contract. `amount` remains an estimated field based on rebased typical price and raw volume.
 
-Volume remains the raw reported Yahoo volume. The design intentionally does not reverse-adjust volume because the Yahoo artifact does not provide a separately verified split-volume contract. `amount` is therefore an estimated research field calculated from adjusted typical price and raw volume. Reports must state this limitation.
+## Transformation Provenance
 
-### Transformation Manifest
-
-The adjusted-data artifact must include:
+The benchmark preparation artifact must include:
 
 - source artifact identifier and digest
 - source manifest digest
-- transformation schema version
-- formula identifier
-- symbol count
-- row count per symbol
-- first and last timestamps per symbol
-- minimum and maximum adjustment factor per symbol
-- count of factor changes materially different from `1.0`
-- audited OHLC repairs
-- rejected symbols or rows with explicit reasons
-- content fingerprint for every adjusted symbol file
-- aggregate adjusted-data fingerprint
+- factor-validation schema version
+- origin-rebasing formula version
+- symbol and row counts
+- first and last timestamp per symbol
+- minimum and maximum provider factor per symbol
+- count and dates of material factor changes
+- invalid row diagnostics
+- audited envelope repairs produced during test fixtures or window creation
+- content fingerprint for every raw symbol file
+- aggregate factor-series fingerprint
 
-The transformation must be deterministic: the same source bytes and transformation version must produce identical adjusted CSV bytes and fingerprints.
+The same raw bytes, formula version, origin, and context rows must produce identical rebased context bytes or canonical numeric fingerprints.
 
 ## Population and Calendar Invariance
 
-The adjusted benchmark must reuse the original experiment's population and calendar rules:
+The benchmark reuses the original experiment's population and calendar rules:
 
 1. Start from all 100 symbols in the 2026 Q3 universe snapshot.
 2. Build or load the canonical calendar from timestamp coverage only.
 3. Use the first canonical date in each month as forecast origin.
 4. Use the next five canonical dates as common targets.
-5. Require exactly 400 complete symbol observations through the origin.
+5. Require exactly 400 complete symbol rows through the origin.
 6. Require the origin and all five target dates for every eligible symbol-window.
 
-Raw and adjusted views for one symbol are derived from the same source rows and therefore must have identical timestamp coverage. A mismatch in timestamps or row count between raw and adjusted files is fatal.
-
-For a valid paired comparison, both model arms must share:
+For a valid paired comparison, all arms must share:
 
 - symbol
 - candidate month
@@ -172,26 +237,7 @@ For a valid paired comparison, both model arms must share:
 - history start and end timestamps
 - lookback length
 - horizon
-
-## Leakage Prevention
-
-For each symbol and forecast origin:
-
-1. End the model context at the forecast-origin close.
-2. Select exactly 400 observed rows ending at the origin.
-3. Pass only the five common future timestamps as `y_timestamp`.
-4. Keep actual target OHLC values inaccessible to the model and baseline functions until predictions are complete.
-5. Compute adjustment factors only from each row's own raw and adjusted-close fields.
-6. Do not use future corporate-action factors to rescale prior context rows beyond the per-row Yahoo adjusted value already present in the immutable source artifact.
-7. Do not select windows, models, or sampling parameters based on target outcomes.
-
-The prediction key becomes:
-
-```text
-(experiment_arm, symbol, forecast_origin, target_timestamp, method)
-```
-
-Duplicate keys are fatal.
+- common adjusted scoring target fingerprint
 
 ## Model Configuration
 
@@ -204,57 +250,51 @@ Duplicate keys are fatal.
 - Sample count: configurable, default `1`
 - Required random seed: `20260802` unless explicitly overridden and recorded
 - Device: CUDA when available, otherwise CPU
-- Predictor maximum context: `512` for both comparison arms in this benchmark
+- Predictor maximum context: `512` for comparison consistency
 
-The 400-row lookback is below the 512-row limit for Kronos-small and its base tokenizer.
+The 400-row lookback is below Kronos-small's 512-row context limit.
 
-### Adjusted Mini
+### Mini Pairing
 
 - Model: `NeoQuasar/Kronos-mini`
 - Tokenizer: `NeoQuasar/Kronos-Tokenizer-2k`
 
-### Adjusted Small
+### Small Pairing
 
 - Model: `NeoQuasar/Kronos-small`
 - Tokenizer: `NeoQuasar/Kronos-Tokenizer-base`
 
-Exact resolved model and tokenizer revisions must be frozen before shard execution and recorded in every shard manifest. A model-tokenizer pairing mismatch is fatal.
+Exact resolved revisions must be frozen before shard execution and recorded in every manifest. A model-tokenizer pairing mismatch is fatal. Tokenizer selection must never be inferred silently from a model string.
 
 ## Baselines
 
-Each adjusted eligible window must produce the existing transparent baselines from adjusted close history only:
+Every eligible window produces the existing transparent baselines from the rebased context only:
 
 - last close
 - 20-day compounded momentum
 - 20-day linear trend
 
-The formulas must remain identical to the original benchmark. Baseline code must not branch on model arm. Baselines may be computed once per adjusted window and reused across A-Mini and A-Small outputs, provided the reducer validates exact equality.
+The formulas remain identical to the original benchmark. Baselines must not receive target factors or target prices.
 
-The raw reference baseline metrics remain reference-only and are not mixed into adjusted-arm paired tests unless source and configuration compatibility is proven.
+Baselines may be computed once per transformed window and shared between A-Mini and A-Small outputs, provided the reducer verifies exact equality.
 
 ## Metrics
 
-### Primary Per-Window Metric: Final Log-Return Absolute Error
+### Primary Per-Window Metric
 
-For each method:
+Final five-day log-return absolute error:
 
 ```text
-actual_log_return    = log(actual_final_close / history_last_close)
-predicted_log_return = log(predicted_final_close / history_last_close)
+actual_log_return    = log(actual_rebased_final_close / origin_close)
+predicted_log_return = log(predicted_final_close / origin_close)
 log_return_abs_error = abs(predicted_log_return - actual_log_return)
 ```
 
-Rules:
-
-- all three prices must be finite and strictly positive
-- invalid denominators or non-positive values are rejected
-- no epsilon substitution is allowed
-
-This is the primary paired metric because it is comparable across securities with different price scales.
+All values must be finite and strictly positive. No epsilon substitution is allowed.
 
 ### Secondary Per-Window Metrics
 
-- five-step close MAE
+- five-step close MAE on the common rebased target
 - five-step close RMSE
 - final-horizon absolute percentage error
 - predicted and realized five-day simple return
@@ -264,7 +304,7 @@ This is the primary paired metric because it is comparable across securities wit
 
 ### Per-Symbol Metrics
 
-For each experiment arm and method:
+For each arm and method:
 
 - eligible window count
 - mean and median log-return absolute error
@@ -287,18 +327,35 @@ For every common monthly cohort meeting the minimum cohort size:
 
 The default minimum cohort remains 20 symbols.
 
+### Corporate-Action Exposure Diagnostics
+
+Each window must record:
+
+- whether provider factor changed anywhere in the 400-row context
+- whether provider factor changed between origin and final target
+- maximum absolute log change in provider factor within context
+- maximum absolute log change between origin and target
+
+Aggregate results must be reported for:
+
+- all paired windows
+- windows with no material factor change
+- windows with a material context or target factor change
+
+The material-change tolerance must be explicit, configurable, and recorded. Default: absolute relative factor change greater than `1e-8`.
+
 ## Paired Comparisons
 
-The benchmark must produce window-level paired differences for:
+Required comparisons:
 
-1. A-Mini versus R-Mini, when the frozen raw reference is compatible.
+1. A-Mini versus R-Mini.
 2. A-Small versus A-Mini.
-3. A-Mini versus adjusted last-close baseline.
-4. A-Mini versus adjusted momentum baseline.
-5. A-Mini versus adjusted linear-trend baseline.
-6. A-Small versus each adjusted baseline.
+3. A-Mini versus rebased last-close baseline.
+4. A-Mini versus rebased momentum baseline.
+5. A-Mini versus rebased linear-trend baseline.
+6. A-Small versus each rebased baseline.
 
-For error metrics, define:
+For error metrics:
 
 ```text
 difference = challenger_error - reference_error
@@ -306,72 +363,81 @@ difference = challenger_error - reference_error
 
 A negative value favors the challenger.
 
-For direction accuracy and ranking metrics, define the comparison orientation explicitly in the output schema so positive values always favor the challenger.
+Paired outputs must include the common key, challenger value, reference value, signed difference, winner label, and corporate-action exposure bucket. Ties remain ties.
 
-Paired files must include the common key, challenger value, reference value, signed difference, and winner label. Ties must remain ties.
+## Clustered Bootstrap Confidence Intervals
 
-## Bootstrap Confidence Intervals
+Repeated monthly windows for one symbol are not independent, and symbols within one month share market conditions. A simple row-level bootstrap could overstate certainty.
 
-The reducer must calculate deterministic non-parametric bootstrap intervals for the mean paired difference.
+The reducer must therefore calculate two deterministic non-parametric intervals for the mean paired difference:
 
-Default protocol:
+### Symbol-Clustered Bootstrap
 
-- resampling unit: `(symbol, forecast_origin)` window
+- Resample symbols with replacement.
+- Include all paired windows belonging to each sampled symbol.
+- Preserve within-symbol temporal dependence.
+
+### Origin-Clustered Bootstrap
+
+- Resample forecast origins with replacement.
+- Include all paired symbols belonging to each sampled origin.
+- Preserve cross-sectional dependence within a market period.
+
+Shared defaults:
+
 - bootstrap draws: `10,000`
 - confidence level: `95%`
-- random seed: required and recorded
-- sampling: with replacement over valid paired windows
+- fixed recorded seed
 
-The primary interval is for mean final log-return absolute-error difference.
+Decision labels:
 
-Decision rule:
+- `robustly_better`: both intervals are entirely below zero
+- `robustly_worse`: both intervals are entirely above zero
+- `mixed_or_inconclusive`: otherwise
 
-- interval entirely below zero: challenger is statistically better on the paired error metric
-- interval entirely above zero: challenger is statistically worse
-- interval includes zero: no statistically clear difference
-
-The report must include effect size, interval bounds, paired-window count, and the decision label. It must not convert statistical significance into profitability claims.
-
-A secondary symbol-clustered bootstrap may be added only if explicitly included in the implementation plan. It is not required for this milestone.
+The report must include mean effect, both intervals, cluster counts, paired-window count, and decision. Statistical significance must not be translated into profitability claims.
 
 ## Architecture
 
-Extend the existing isolated evaluation architecture without modifying Kronos model internals.
+Extend the existing evaluation architecture without modifying Kronos model internals.
 
 ### `bist_eval/adjustments.py`
 
 Owns:
 
-- adjustment-factor calculation
-- strict factor validation
-- adjusted OHLCVA transformation
-- deterministic transformation diagnostics
-- adjusted manifest records
+- provider-factor validation
+- origin-relative factor calculation
+- context rebasing
+- post-prediction target rebasing
+- corporate-action exposure diagnostics
+- deterministic transformation fingerprints
 
-### `scripts/build_bist_adjusted_data.py`
+### `bist_eval/windows.py`
 
-CLI that converts the immutable raw Yahoo artifact into a versioned adjusted artifact. It accepts source/raw directories, source manifest, output directory, strict mode, and optional symbol subsets.
+Extend the forecast-window contract to retain raw context, raw target, validated provider factors, and a target accessor that is unavailable to predictor-facing code.
+
+The implementation must make it structurally difficult to pass target factors or target prices to the model adapter.
 
 ### `bist_eval/config.py`
 
-Extend the evaluation configuration with explicit fields for:
+Add explicit fields for:
 
 - experiment arm
-- data view
-- model family
-- tokenizer family
-- adjustment schema version
-- bootstrap configuration where relevant
+- context view
+- scoring target view
+- model-tokenizer pairing
+- adjustment formula version
+- material factor-change tolerance
 
-Configuration fingerprints must differ between raw, adjusted-mini, and adjusted-small arms while retaining common cohort identifiers.
+Arm fingerprints must differ while common cohort and target fingerprints remain comparable.
 
 ### `bist_eval/model_adapter.py`
 
-Continue to own lazy loading and prediction. Add explicit validated model-tokenizer pairing metadata. Do not infer the tokenizer from the model name silently.
+Continue lazy loading and prediction. Add explicit validated model-tokenizer pairing metadata. The adapter accepts already prepared context only and must not import target-adjustment helpers.
 
 ### `bist_eval/metrics.py`
 
-Add guarded log-return metrics and paired-comparison helpers while preserving prior metric schemas where backward compatible.
+Add guarded log-return metrics using the common rebased target.
 
 ### `bist_eval/comparison.py`
 
@@ -381,46 +447,51 @@ Owns:
 - paired window joins
 - signed differences
 - winner/tie labels
-- deterministic bootstrap intervals
-- comparison decision labels
+- exposure buckets
+- symbol-clustered bootstrap
+- origin-clustered bootstrap
+- final decision labels
 
 ### `bist_eval/reporting.py`
 
-Add stable schemas for experiment arms, paired comparisons, bootstrap intervals, and adjusted-data provenance.
+Add stable schemas for experiment arms, common target provenance, paired comparisons, bootstrap intervals, and adjustment diagnostics.
 
 ### Evaluation CLI
 
-Either extend `scripts/evaluate_bist100_zero_shot.py` with explicit arm/data-view parameters or add a thin benchmark-specific wrapper. The implementation plan must choose the smaller change that preserves backward compatibility and prevents ambiguous defaults.
+Either extend `scripts/evaluate_bist100_zero_shot.py` with explicit arm/context/target parameters or add a thin benchmark wrapper. The implementation plan must choose the smaller backward-compatible option with no ambiguous default.
+
+### Preparation CLI
+
+Add a CLI that validates factor series and writes a factor/provenance manifest. It must not write static adjusted model-input CSVs.
 
 ## Data Flow
 
 ```text
-verified Yahoo raw artifact
+immutable Yahoo raw artifact
         |
-        +--> raw mini reference artifact compatibility check
+        +--> timestamp calendar
         |
-        v
-strict adj_close / close transformation
-        |
-        v
-adjusted OHLCVA artifact + manifest + fingerprints
-        |
-        +--> shared canonical calendar and windows
-        |
-        +--> adjusted baselines
-        |
-        +--> Kronos-mini shards
-        |
-        +--> Kronos-small shards
+        +--> validated provider-factor series
         |
         v
-arm-specific predictions and metrics
+raw symbol window at common origin
+        |
+        +--> R-Mini raw context
+        |
+        +--> origin-rebased context --> A-Mini
+        |                           --> A-Small
+        |                           --> baselines
+        |
+        +--> model predictions complete
         |
         v
-compatibility validation + paired joins
+post-prediction common rebased target
         |
         v
-deterministic bootstrap intervals
+arm metrics + paired joins
+        |
+        v
+symbol- and origin-clustered bootstrap
         |
         v
 CSV + JSON + Markdown report
@@ -428,51 +499,47 @@ CSV + JSON + Markdown report
 
 ## Execution Strategy
 
-The real-model workflow is manual and resource bounded.
+The real-model workflow remains manual and resource bounded.
 
 Recommended jobs:
 
 1. `prepare-data`
    - obtain the immutable verified raw artifact
-   - validate its digest and 100/100 manifest
-   - build adjusted files
-   - validate timestamp identity and adjusted manifest
-   - upload the adjusted artifact
+   - validate digest and 100/100 manifest
+   - validate factor series
+   - freeze canonical calendar and factor manifest
 
 2. `prepare-model-mini`
    - resolve and freeze mini model and tokenizer revisions
-   - upload immutable model artifact
 
 3. `prepare-model-small`
-   - resolve and freeze small model and base-tokenizer revisions
-   - upload immutable model artifact
+   - resolve and freeze small model and tokenizer revisions
 
-4. `evaluate-mini`
-   - ten deterministic symbol shards
-   - adjusted data only
-   - load model once per shard
+4. `evaluate-raw-mini`
+   - reuse compatible prior predictions or run ten deterministic shards
+   - rescore against the common rebased target
 
-5. `evaluate-small`
-   - ten deterministic symbol shards
-   - same adjusted data and shard mapping
-   - load model once per shard
+5. `evaluate-adjusted-mini`
+   - ten deterministic shards
 
-6. `reduce`
-   - validate all twenty shards
-   - validate fingerprints and arm metadata
+6. `evaluate-adjusted-small`
+   - ten deterministic shards using identical windows and context fingerprints
+
+7. `reduce`
+   - validate all required shards or compatible reference predictions
+   - validate common target fingerprints
    - combine outputs
-   - load compatible raw reference if available
-   - compute adjusted aggregates, paired comparisons, bootstrap intervals, and final report
+   - compute arm aggregates, paired comparisons, exposure diagnostics, clustered intervals, and report
 
-Concurrency and timeout limits must prevent uncontrolled compute use. The workflow should avoid redownloading the same model independently inside every shard.
+Model artifacts should be resolved once per model family and reused by shards. Concurrency and timeout limits must prevent uncontrolled compute use.
 
 ## Output Contract
 
-Default output directory:
+Default directory:
 
 ```text
-results/bist100-adjusted-benchmark/
-├── adjusted_data_manifest.json
+results/bist100-origin-rebased-benchmark/
+├── factor_manifest.json
 ├── predictions.csv
 ├── window_metrics.csv
 ├── skipped_windows.csv
@@ -491,12 +558,14 @@ results/bist100-adjusted-benchmark/
 Prediction and metric outputs must include:
 
 - `experiment_arm`
-- `data_view`
+- `context_view`
+- `scoring_target_view`
 - `model_id`
 - `tokenizer_id`
-- `model_revision`
-- `tokenizer_revision`
-- `adjustment_schema_version`
+- exact model and tokenizer revisions
+- adjustment formula version
+- common target fingerprint
+- corporate-action exposure fields
 
 ### `paired_comparisons.csv`
 
@@ -507,10 +576,11 @@ At minimum:
 - reference arm/method
 - symbol
 - forecast origin
-- primary challenger error
-- primary reference error
+- challenger primary error
+- reference primary error
 - signed difference
 - winner label
+- exposure bucket
 
 ### `bootstrap_intervals.csv`
 
@@ -518,6 +588,8 @@ At minimum:
 
 - comparison identifier
 - metric
+- clustering method
+- cluster count
 - paired-window count
 - bootstrap draws
 - seed
@@ -525,112 +597,124 @@ At minimum:
 - lower bound
 - upper bound
 - confidence level
-- decision
+- interval decision
+- combined robust decision
 
 ### `summary.json`
 
 Must answer directly:
 
-- whether adjusted mini improved over compatible raw mini
-- whether adjusted small improved over adjusted mini
-- whether either model beat each adjusted baseline
-- direction accuracy for each model
-- average ranking correlation for each model
-- number of eligible and paired windows
-- unavailable comparisons and explicit reasons
+- whether adjusted context improved mini under a common target
+- whether small improved over adjusted mini
+- whether either model beat each rebased baseline
+- direction accuracy for each arm
+- average ranking correlation for each arm
+- results by factor-exposure bucket
+- paired-window and cluster counts
+- unavailable comparisons and reasons
 
 All schemas must be versioned.
 
 ## Failure Handling
 
-- Missing `adj_close` is fatal for adjusted preparation in strict mode.
-- Non-positive or non-finite `close`, `adj_close`, factor, or adjusted price is fatal for that symbol in strict mode.
-- Timestamp or row-count mismatch between raw and adjusted views is fatal.
-- Unrecorded OHLC repair is fatal.
-- Model-tokenizer pairing mismatch is fatal.
-- Missing model revision, tokenizer revision, source digest, or adjustment fingerprint is fatal for a real benchmark shard.
-- A shard with NaN, infinite, non-positive predicted close, duplicate keys, or incomplete output must not write `COMPLETED`.
-- Reducer configuration or fingerprint mismatch is fatal.
-- Missing expected shards are fatal.
-- Raw-reference incompatibility makes only the raw-versus-adjusted comparison unavailable; it must not invalidate the adjusted mini-versus-small benchmark.
-- Insufficient history and missing target dates remain normal, reported skips.
-- Bootstrap comparison with zero paired windows is unavailable, not zero effect.
-- Outputs are written atomically, with a completion marker only after schema and row-count checks pass.
+- Missing `adj_close` is fatal in strict preparation mode.
+- Non-positive or non-finite required prices or factors are fatal for that symbol.
+- Any static adjusted model-input file path is rejected by this benchmark workflow.
+- Target factors or target values entering predictor inputs are a test failure and runtime contract violation.
+- Model-tokenizer mismatch is fatal.
+- Missing exact revisions, source digest, factor fingerprint, or common target fingerprint is fatal for real-model shards.
+- NaN, infinite, or non-positive predicted close is fatal in strict mode.
+- Duplicate prediction keys are fatal.
+- Reducer configuration, cohort, source, factor, or target fingerprint mismatch is fatal.
+- Missing required shards are fatal.
+- Incompatible prior predictions make reuse unavailable; they do not silently fall back to old metrics.
+- Insufficient history and missing target dates remain normal reported skips.
+- A comparison with no paired windows is unavailable, not zero effect.
+- Completion markers are written only after schema and row-count validation.
 
 ## Testing
 
-### Adjustment Unit Tests
+### Factor and Rebasing Tests
 
 Network-free synthetic tests must cover:
 
-- exact factor calculation
-- identity factor
-- split-like factor
-- dividend-like factor
-- adjusted OHLC scaling
+- exact provider-factor calculation
+- identity factors
+- split-like and dividend-like factor changes
+- origin factor equals one after rebasing
+- cancellation of a common future multiplicative adjustment from all pre-origin factors
+- context transformation uses no target factor
+- target transformation is inaccessible until post-prediction scoring
+- exact rebased OHLC values
 - raw volume preservation
-- adjusted amount calculation
-- non-positive close rejection
-- non-positive adjusted close rejection
-- non-finite factor rejection
-- timestamp and row-count preservation
-- deterministic output bytes and fingerprints
-- audited floating-point OHLC envelope repair
+- rebased amount calculation
+- non-positive and non-finite rejection
+- deterministic context and target fingerprints
+- audited floating-point envelope repair
+
+### Leakage Tests
+
+- predictor receives context rows and future timestamps only
+- predictor cannot access raw target frame
+- predictor cannot access target provider factors
+- baseline functions cannot access target values or factors
+- changing target factors must not change model or baseline predictions
+- changing a factor after the final target must not change context or scored target ratios
 
 ### Metric Tests
 
-- exact simple and log return calculations
+- common-target simple and log returns
 - log-return absolute error
 - positive-price guards
 - direction correctness
-- per-symbol aggregates
+- symbol aggregates
 - ranking metrics using log returns
 - constant-series and insufficient-cohort handling
+- exposure bucket assignment
 
-### Comparison Tests
+### Comparison and Bootstrap Tests
 
 - exact paired joins
 - exclusion of unmatched windows
 - signed-difference orientation
 - tie handling
-- model-arm metadata validation
-- raw-reference compatibility checks
-- deterministic bootstrap results with fixed seed
-- confidence interval and decision labels
-- empty and single-window edge cases
+- arm and target fingerprint validation
+- deterministic symbol-clustered intervals
+- deterministic origin-clustered intervals
+- robust decision labels
+- empty, single-cluster, and degenerate cases
 
 ### Model Adapter Tests
 
 Using fake predictors:
 
-- mini and small pair with their explicit tokenizers
-- mismatched model-tokenizer combinations fail
-- 400 rows are passed without exceeding 512 context
+- mini and small pair with explicit tokenizers
+- mismatches fail
+- 400 rows fit the 512 context contract
 - common timestamps and columns are preserved
-- targets remain inaccessible
+- target data remains inaccessible
 - invalid predictions fail closed
 
 ### Reducer Tests
 
-- twenty expected shard validation
-- missing mini or small shard rejection
-- data fingerprint mismatch rejection
-- adjustment schema mismatch rejection
+- all required arm shards or compatible reference predictions
+- missing shard rejection
+- source/factor/target fingerprint mismatch rejection
 - model revision mismatch rejection
-- duplicate prediction key rejection
-- shared-baseline consistency checks
-- compatible raw artifact reuse
+- duplicate key rejection
+- shared-baseline equality
 - output schema and completion marker
 
 ### Real-Model Smoke Test
 
-Before the full benchmark, run both adjusted models on the same two symbols and two common forecast origins. The smoke test succeeds only when:
+Run all three arms on the same two symbols and two common origins. The smoke test succeeds only when:
 
-- adjusted data preparation succeeds
+- factor validation succeeds
+- raw and rebased contexts share timestamps and origin scale
 - both exact model-tokenizer pairs load
-- both models return aligned five-date predictions
-- output schemas validate
-- paired mini-versus-small metrics and a deterministic bootstrap artifact are produced
+- predictions align with five target dates
+- common rebased target scoring succeeds
+- paired comparisons and both clustered interval files are generated
 
 The smoke result is a technical gate, not performance evidence.
 
@@ -638,38 +722,41 @@ The smoke result is a technical gate, not performance evidence.
 
 The milestone is complete when:
 
-1. The adjusted artifact is reproducibly derived from the verified raw artifact with full provenance.
-2. All network-free tests pass.
-3. The two-model real smoke test succeeds.
-4. Ten mini shards and ten small shards complete or report a reproducible infrastructure limitation.
-5. The reducer validates every shard and produces schema-valid final artifacts.
-6. Mini-versus-small comparisons use exactly matched symbol-window keys.
-7. Adjusted-mini versus raw-mini is reported only when reference compatibility is proven.
-8. The final report includes primary log-return error, direction, ranking, baseline comparisons, and bootstrap intervals.
-9. The report states survivorship bias, Yahoo data limitations, raw-volume treatment, and research-only status.
-10. No fine-tuning, portfolio construction, or order-placement capability is introduced.
+1. Factor series is reproducibly validated from the immutable raw artifact.
+2. No static adjusted model-input file is used.
+3. Leakage tests prove target factors and values cannot affect predictions.
+4. All network-free tests pass.
+5. The three-arm real smoke test succeeds.
+6. Full required shards complete or report a reproducible infrastructure limitation.
+7. The reducer produces schema-valid final artifacts with common target fingerprints.
+8. Raw-mini versus adjusted-mini uses the same target and exactly matched windows.
+9. Adjusted-small versus adjusted-mini uses identical transformed contexts.
+10. The report includes primary log-return error, direction, ranking, exposure buckets, baseline comparisons, and both clustered intervals.
+11. The report states survivorship bias, Yahoo assumptions, raw-volume treatment, and research-only status.
+12. No fine-tuning, portfolio construction, or order placement is introduced.
 
 ## Security, Cost, and Operational Boundaries
 
 - Repository and workflow permissions remain read-only except standard artifact operations.
 - No brokerage, exchange, or private Hugging Face credentials are required.
 - Public model assets must be pinned to exact resolved revisions.
-- Data and model artifacts must carry digests.
+- Data and model artifacts carry digests.
 - Full benchmark execution remains manual.
-- Workflow concurrency and timeout controls must prevent duplicate or unbounded runs.
+- Concurrency and timeout controls prevent duplicate or unbounded runs.
 - Fine-tuning remains a separate future milestone requiring explicit design, plan, compute budget, and leakage controls.
 
 ## Known Limitations
 
 - Yahoo is not an official licensed Borsa Istanbul source.
-- `adj_close / close` is a provider-derived adjustment and may combine split and dividend effects in ways that require independent validation.
+- The factor-ratio cancellation behavior is a research assumption based on provider-adjusted series and requires independent validation.
 - Volume remains raw and is not reverse-adjusted.
 - `amount` remains an estimate.
 - The 2026 Q3 universe projected backward creates survivorship and selection bias.
 - Monthly anchors do not measure every possible forecast origin.
 - One stochastic sample per window may produce sampling variance even with fixed seeds.
-- Statistical superiority on forecast error does not establish a profitable strategy.
-- Comparing model families also changes tokenizer family, so the benchmark attributes improvement to the model-tokenizer system, not model weights alone.
+- Clustered intervals reduce but do not eliminate dependence concerns.
+- Comparing mini and small also changes tokenizer family, so any improvement belongs to the model-tokenizer system.
+- Better forecast error does not establish a profitable strategy.
 
 ## Future Milestones
 
@@ -679,4 +766,4 @@ Only after this benchmark is reviewed:
 2. Test repeated sampling and uncertainty bands.
 3. Reconstruct point-in-time constituent histories.
 4. Add transaction-cost-aware portfolio diagnostics.
-5. Consider BIST-specific fine-tuning only if adjusted zero-shot evidence justifies the additional complexity and compute.
+5. Consider BIST-specific fine-tuning only if origin-rebased zero-shot evidence justifies the complexity and compute.

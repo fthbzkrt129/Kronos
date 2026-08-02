@@ -132,6 +132,12 @@ def run_adjusted_reducer(
         )
     )
     invalid_counts = _invalid_model_output_counts(skip_frame)
+    requested_symbols = [
+        symbol
+        for manifest, directory in mini
+        for symbol in manifest.get("symbols", [])
+    ]
+    evaluated_symbols = sorted(set(metric_frame.symbol))
     questions = {
         "Does adjusted data improve Kronos-mini?": decisions.get(
             "adjusted-mini_vs_raw-mini", "unavailable"
@@ -157,7 +163,8 @@ def run_adjusted_reducer(
                 )
             ).sum()
         ),
-        "symbols_evaluated": int(metric_frame.symbol.nunique()),
+        "symbols_requested": len(requested_symbols),
+        "symbols_evaluated": len(evaluated_symbols),
         "questions": questions,
         "arm_metrics": arm_summary.to_dict("records"),
         "comparison_decisions": decisions,
@@ -183,7 +190,8 @@ def run_adjusted_reducer(
         "mini_tokenizer_revision": mini[0][0].get("tokenizer_revision"),
         "small_model_revision": small[0][0].get("model_revision"),
         "small_tokenizer_revision": small[0][0].get("tokenizer_revision"),
-        "symbols": sorted(set(metric_frame.symbol)),
+        "symbols": requested_symbols,
+        "evaluated_symbols": evaluated_symbols,
         "bootstrap": {
             "draws": bootstrap_draws,
             "confidence": bootstrap_confidence,

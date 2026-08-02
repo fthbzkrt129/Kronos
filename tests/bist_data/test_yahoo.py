@@ -10,6 +10,20 @@ def sample_index():
     return pd.DatetimeIndex(["2026-07-30", "2026-07-31"], name="Date")
 
 
+def valid_response() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Open": [10.0],
+            "High": [12.0],
+            "Low": [9.0],
+            "Close": [11.0],
+            "Adj Close": [10.5],
+            "Volume": [100],
+        },
+        index=pd.DatetimeIndex(["2026-07-30"], name="Date"),
+    )
+
+
 def test_normalize_yahoo_frame_handles_flat_columns():
     frame = pd.DataFrame(
         {
@@ -70,17 +84,7 @@ def test_download_daily_candles_retries_transient_failure():
         calls[symbol] += 1
         if calls[symbol] == 1:
             raise RuntimeError("temporary")
-        return pd.DataFrame(
-            {
-                "Open": [10.0],
-                "High": [12.0],
-                "Low": [9.0],
-                "Close": [11.0],
-                "Adj Close": [10.5],
-                "Volume": [100],
-            },
-            index=pd.DatetimeIndex(["2026-07-30"], name="Date"),
-        )
+        return valid_response()
 
     result = download_daily_candles(
         "THYAO",
@@ -93,6 +97,38 @@ def test_download_daily_candles_retries_transient_failure():
 
     assert calls["THYAO.IS"] == 2
     assert len(result) == 1
+
+
+def test_download_daily_candles_retries_incomplete_provider_frame():
+    calls = defaultdict(int)
+
+    def fake_download(symbol, **kwargs):
+        calls[symbol] += 1
+        if calls[symbol] == 1:
+            incomplete = valid_response()
+            incomplete.loc[:, "Volume"] = pd.NA
+            return incomplete
+        return valid_response()
+
+    result = download_daily_candles(
+        "THYAO",
+        start="2026-01-01",
+        end="2026-08-01",
+        retries=1,
+        downloader=fake_download,
+        sleep_seconds=0,
+    )
+
+    assert calls["THYAO.IS"] == 2
+    assert result.loc[0, "volume"] == 100
+
+
+def test_normalize_yahoo_frame_rejects_missing_ohlcv_values():
+    frame = valid_response()
+    frame.loc[:, "Close"] = pd.NA
+
+    with pytest.raises(YahooDownloadError, match="missing OHLCV"):
+        normalize_yahoo_frame(frame, "THYAO.IS")
 
 
 def test_download_daily_candles_rejects_empty_response():

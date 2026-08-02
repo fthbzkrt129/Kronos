@@ -6,11 +6,6 @@ on:
       - feature/bist-yahoo-data-pipeline
     paths:
       - ".github/workflows/bist-yahoo-download.yml"
-  pull_request:
-    branches:
-      - master
-    paths:
-      - ".github/workflows/bist-yahoo-download.yml"
   workflow_dispatch:
 
 permissions:
@@ -72,54 +67,6 @@ jobs:
             echo "Manifest was not generated."
             exit 1
           fi
-
-      - name: Diagnose rejected OHLC rows
-        if: always()
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          from bist_data.yahoo import download_daily_candles
-
-          manifest_path = Path("data/bist/yahoo/manifest.json")
-          if not manifest_path.exists():
-              print("No manifest available for diagnostics.")
-              raise SystemExit(0)
-
-          manifest = json.loads(manifest_path.read_text())
-          output_dir = Path("data/bist/yahoo/diagnostics")
-          output_dir.mkdir(parents=True, exist_ok=True)
-
-          for failure in manifest["failures"]:
-              symbol = failure["symbol"]
-              try:
-                  frame = download_daily_candles(
-                      symbol,
-                      start=manifest["request"]["start"],
-                      end=manifest["request"]["end_exclusive"],
-                      retries=3,
-                      sleep_seconds=1.5,
-                  )
-                  required_high = frame[["open", "close", "low"]].max(axis=1)
-                  required_low = frame[["open", "close", "high"]].min(axis=1)
-                  bad_high = frame["high"] < required_high
-                  bad_low = frame["low"] > required_low
-                  rejected = frame.loc[bad_high | bad_low].copy()
-                  rejected["required_high"] = required_high.loc[rejected.index]
-                  rejected["high_shortfall"] = (
-                      required_high.loc[rejected.index] - rejected["high"]
-                  )
-                  rejected["required_low"] = required_low.loc[rejected.index]
-                  rejected["low_excess"] = (
-                      rejected["low"] - required_low.loc[rejected.index]
-                  )
-                  rejected.to_csv(output_dir / f"{symbol}.csv", index=False)
-                  print(f"Diagnostic rows for {symbol}:")
-                  print(rejected.to_string(index=False))
-              except Exception as exc:
-                  print(f"Diagnostic download failed for {symbol}: {type(exc).__name__}: {exc}")
-          PY
 
       - name: Upload BIST Yahoo data artifact
         if: always()

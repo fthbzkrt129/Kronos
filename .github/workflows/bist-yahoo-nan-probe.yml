@@ -1,0 +1,54 @@
+name: BIST Yahoo NaN Probe
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/bist-yahoo-nan-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install pandas==2.2.2 yfinance
+
+      - name: Inspect provider missing rows
+        run: |
+          python - <<'PY'
+          from bist_data.quality import repair_ohlc_envelope
+          from bist_data.yahoo import download_daily_candles
+
+          for symbol in ("THYAO", "MIATK", "PSGYO"):
+              frame = download_daily_candles(
+                  symbol,
+                  start="2015-01-01",
+                  end="2026-08-03",
+                  retries=3,
+                  sleep_seconds=1.5,
+              )
+              columns = ["open", "high", "low", "close", "volume"]
+              missing = frame.loc[frame[columns].isna().any(axis=1)]
+              repaired, repairs = repair_ohlc_envelope(frame)
+              repaired_missing = repaired.loc[repaired[columns].isna().any(axis=1)]
+              print(f"=== {symbol} ===")
+              print(f"rows={len(frame)} missing_before={len(missing)} missing_after={len(repaired_missing)}")
+              print("Provider missing rows:")
+              print(missing.to_string(index=False))
+              print("Tail:")
+              print(frame.tail(5).to_string(index=False))
+              print(f"repairs={repairs}")
+          PY

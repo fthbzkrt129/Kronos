@@ -9,7 +9,9 @@ This fork includes a research-only adapter that downloads daily Borsa Istanbul c
 - Yahoo does not provide official daily turnover in this download. The Kronos `amount` value is estimated as `((high + low + close) / 3) * volume`.
 - Do not connect this pipeline directly to a live brokerage account. Validate with licensed data, walk-forward backtests, and paper trading first.
 
-## OHLC quality handling
+## Provider resilience and OHLC quality handling
+
+Incomplete Yahoo OHLCV responses are treated as transient provider errors and retried with a bounded retry policy.
 
 The pipeline keeps the normalized Yahoo response unchanged in `raw/`. Yahoo can occasionally publish a daily close just outside the reported high/low range. Kronos requires a mathematically valid OHLC candle, so the model-ready copy applies only the smallest envelope expansion needed:
 

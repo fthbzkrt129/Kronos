@@ -1,0 +1,326 @@
+name: BIST 100 Adjusted Kronos Full Validation V2
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/bist100-adjusted-kronos-full-validation-v2.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare-inputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install numpy pandas
+      - name: Restore previously verified immutable artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .artifacts .models/kronos-mini .models/kronos-small
+          gh api repos/${{ github.repository }}/actions/artifacts/8831599258/zip > /tmp/data.zip
+          unzip -q /tmp/data.zip -d .artifacts
+          gh api repos/${{ github.repository }}/actions/artifacts/8831598935/zip > /tmp/mini.zip
+          unzip -q /tmp/mini.zip -d .models/kronos-mini
+          gh api repos/${{ github.repository }}/actions/artifacts/8831599156/zip > /tmp/small.zip
+          unzip -q /tmp/small.zip -d .models/kronos-small
+      - name: Revalidate data, factors, and exact model revisions
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          source = json.load(open('.artifacts/source/manifest.json'))
+          factors = json.load(open('.artifacts/factors/factor_manifest.json'))
+          mini = json.load(open('.models/kronos-mini/asset_manifest.json'))
+          small = json.load(open('.models/kronos-small/asset_manifest.json'))
+
+          assert source['summary'] == {'requested': 100, 'succeeded': 100, 'failed': 0}
+          assert len(list(Path('.artifacts/source/raw').glob('*.csv'))) == 100
+          assert {row['last_timestamp'] for row in source['successes']} == {'2026-07-31'}
+          assert factors['summary'] == {'requested': 100, 'succeeded': 100, 'failed': 0}
+          assert factors['static_adjusted_model_inputs_written'] is False
+          assert factors['source_artifact_id'] == '8826613095'
+          assert factors['source_artifact_digest'] == '51578854a6fc341f34bff8bea4cf8f57d900006f2a35e2a34e983d6389933f2c'
+
+          assert mini['model_id'] == 'NeoQuasar/Kronos-mini'
+          assert mini['tokenizer_id'] == 'NeoQuasar/Kronos-Tokenizer-2k'
+          assert mini['model_revision'] == 'f4e68697d9d5aed55cef5c96aabc3376bcad9f81'
+          assert mini['tokenizer_revision'] == '26966d0035065a0cae0ebad7af8ece35bc1fb51c'
+
+          assert small['model_id'] == 'NeoQuasar/Kronos-small'
+          assert small['tokenizer_id'] == 'NeoQuasar/Kronos-Tokenizer-base'
+          assert small['model_revision'] == '901c26c1332695a2a8f243eb2f37243a37bea320'
+          assert small['tokenizer_revision'] == '0e0117387f39004a9016484a186a908917e22426'
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adjusted-v2-data-${{ github.run_id }}
+          path: .artifacts
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adjusted-v2-mini-model-${{ github.run_id }}
+          path: .models/kronos-mini
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adjusted-v2-small-model-${{ github.run_id }}
+          path: .models/kronos-small
+          retention-days: 14
+          if-no-files-found: error
+
+  invalid-output-preflight:
+    needs: prepare-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-data-${{ github.run_id }}
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-small-model-${{ github.run_id }}
+          path: .models/kronos-small
+      - name: Reproduce HEKTS invalid draw without clipping or retry
+        run: |
+          python scripts/evaluate_bist100_adjusted_benchmark.py \
+            --mode small \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/preflight \
+            --start 2023-01-01 --end 2023-01-31 \
+            --model-id NeoQuasar/Kronos-small \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-base \
+            --model-path .models/kronos-small/model \
+            --tokenizer-path .models/kronos-small/tokenizer \
+            --model-revision 901c26c1332695a2a8f243eb2f37243a37bea320 \
+            --tokenizer-revision 0e0117387f39004a9016484a186a908917e22426 \
+            --device cpu --seed 20260802 --sample-count 1 \
+            --material-factor-tolerance 1e-8 \
+            --symbols "ENKAI,EREGL,FENER,FROTO,GARAN,GSRAY,GUBRF,TURSG,HALKB,HEKTS" \
+            --strict
+      - name: Validate explicit exclusion policy
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          root = Path('.artifacts/preflight')
+          assert (root / 'COMPLETED').is_file()
+          skips = pd.read_csv(root / 'skipped_windows.csv')
+          predictions = pd.read_csv(root / 'predictions.csv')
+          manifest = json.load(open(root / 'shard_manifest.json'))
+
+          rejected = skips[
+              (skips.symbol == 'HEKTS')
+              & (skips.reason_code == 'invalid_model_output')
+              & skips.reason_detail.str.contains('arm=adjusted-small', regex=False)
+          ]
+          assert len(rejected) == 1
+          assert 'HEKTS' not in set(predictions.symbol)
+          assert manifest['invalid_model_outputs'] == {'adjusted-small': 1}
+          assert (predictions.predicted_close > 0).all()
+          PY
+
+  evaluate-mini:
+    needs: [prepare-inputs, invalid-output-preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard_index: [0,1,2,3,4,5,6,7,8,9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-data-${{ github.run_id }}
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-mini-model-${{ github.run_id }}
+          path: .models/kronos-mini
+      - name: Run mini-pair shard
+        run: |
+          python scripts/evaluate_bist100_adjusted_benchmark.py \
+            --mode mini-pair \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/mini/shard-${{ matrix.shard_index }} \
+            --start 2023-01-01 --end 2026-08-02 \
+            --model-path .models/kronos-mini/model \
+            --tokenizer-path .models/kronos-mini/tokenizer \
+            --model-revision f4e68697d9d5aed55cef5c96aabc3376bcad9f81 \
+            --tokenizer-revision 26966d0035065a0cae0ebad7af8ece35bc1fb51c \
+            --device cpu --seed 20260802 --sample-count 1 \
+            --material-factor-tolerance 1e-8 \
+            --shard-count 10 --shard-index ${{ matrix.shard_index }} --strict
+      - name: Enforce shard completion
+        if: always()
+        run: test -f .artifacts/mini/shard-${{ matrix.shard_index }}/COMPLETED
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adjusted-v2-mini-shard-${{ matrix.shard_index }}
+          path: .artifacts/mini/shard-${{ matrix.shard_index }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  evaluate-small:
+    needs: [prepare-inputs, invalid-output-preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard_index: [0,1,2,3,4,5,6,7,8,9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-data-${{ github.run_id }}
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-small-model-${{ github.run_id }}
+          path: .models/kronos-small
+      - name: Run small shard
+        run: |
+          python scripts/evaluate_bist100_adjusted_benchmark.py \
+            --mode small \
+            --raw-dir .artifacts/source/raw \
+            --source-manifest .artifacts/source/manifest.json \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --universe data/universes/xu100_2026_q3.csv \
+            --output .artifacts/small/shard-${{ matrix.shard_index }} \
+            --start 2023-01-01 --end 2026-08-02 \
+            --model-id NeoQuasar/Kronos-small \
+            --tokenizer-id NeoQuasar/Kronos-Tokenizer-base \
+            --model-path .models/kronos-small/model \
+            --tokenizer-path .models/kronos-small/tokenizer \
+            --model-revision 901c26c1332695a2a8f243eb2f37243a37bea320 \
+            --tokenizer-revision 0e0117387f39004a9016484a186a908917e22426 \
+            --device cpu --seed 20260802 --sample-count 1 \
+            --material-factor-tolerance 1e-8 \
+            --shard-count 10 --shard-index ${{ matrix.shard_index }} --strict
+      - name: Enforce shard completion
+        if: always()
+        run: test -f .artifacts/small/shard-${{ matrix.shard_index }}/COMPLETED
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adjusted-v2-small-shard-${{ matrix.shard_index }}
+          path: .artifacts/small/shard-${{ matrix.shard_index }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  reduce:
+    needs: [evaluate-mini, evaluate-small]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install numpy pandas
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: adjusted-v2-mini-shard-*
+          path: .artifacts/reduce/mini
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: adjusted-v2-small-shard-*
+          path: .artifacts/reduce/small
+      - uses: actions/download-artifact@v4
+        with:
+          name: adjusted-v2-data-${{ github.run_id }}
+          path: .
+      - name: Reduce all 20 shards
+        run: |
+          python scripts/reduce_bist100_adjusted_benchmark.py \
+            --mini-shards-dir .artifacts/reduce/mini \
+            --small-shards-dir .artifacts/reduce/small \
+            --expected-shards 10 \
+            --factor-manifest .artifacts/factors/factor_manifest.json \
+            --output results/bist100-adjusted-benchmark \
+            --minimum-ranking-cohort 20 \
+            --bootstrap-draws 10000 \
+            --bootstrap-confidence 0.95 \
+            --bootstrap-seed 20260802
+      - name: Validate final contract
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          root = Path('results/bist100-adjusted-benchmark')
+          assert (root / 'COMPLETED').is_file()
+          summary = json.load(open(root / 'summary.json'))
+          manifest = json.load(open(root / 'run_manifest.json'))
+          predictions = pd.read_csv(root / 'predictions.csv')
+          skips = pd.read_csv(root / 'skipped_windows.csv')
+          intervals = pd.read_csv(root / 'bootstrap_intervals.csv')
+
+          assert len(manifest['symbols']) == 100
+          assert summary['symbols_requested'] == 100
+          assert set(predictions.experiment_arm) == {
+              'raw-mini', 'adjusted-mini', 'adjusted-small', 'adjusted-baselines'
+          }
+          assert (predictions.predicted_close > 0).all()
+          assert len(intervals) > 0
+          assert (skips.reason_code == 'invalid_model_output').any()
+
+          print('# BIST 100 Adjusted Kronos Benchmark V2')
+          print(f"- Requested symbols: {summary['symbols_requested']}")
+          print(f"- Evaluated symbols: {summary['symbols_evaluated']}")
+          print(f"- Prediction rows: {summary['prediction_rows']}")
+          print(f"- Eligible model windows: {summary['eligible_model_windows']}")
+          print(f"- Invalid model outputs: {summary['invalid_model_output_counts']}")
+          for question, answer in summary['questions'].items():
+              print(f'- {question}: **{answer}**')
+          print('\n> Research-only, survivorship-biased output. Not investment advice.')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bist100-adjusted-kronos-v2-${{ github.run_id }}
+          path: results/bist100-adjusted-benchmark
+          retention-days: 30
+          if-no-files-found: error

@@ -30,35 +30,39 @@ jobs:
           unzip -q /tmp/data.zip -d .artifacts
           gh api repos/${{ github.repository }}/actions/artifacts/8831599156/zip > /tmp/small.zip
           unzip -q /tmp/small.zip -d .models/kronos-small
-      - name: Print first-cohort raw small-model outputs
+      - name: Reproduce exact cohort batches and capture invalid closes
         run: |
           python - <<'PY'
           import json
           import random
+          from pathlib import Path
+
           import numpy as np
           import pandas as pd
           import torch
-          from pathlib import Path
 
           from bist_data.universe import load_universe
-          from bist_eval.adjustments import rebase_context
+          from bist_eval.benchmark import _prepare
           from bist_eval.calendar import build_canonical_calendar, build_monthly_cohorts
           from bist_eval.data import discover_raw_symbol_files, load_raw_symbol_frame, load_timestamp_coverage
           from bist_eval.model_adapter import KronosModelAdapter, MODEL_COLUMNS, derive_cohort_seed
-          from bist_eval.windows import build_benchmark_windows
 
           universe = Path("data/universes/xu100_2026_q3.csv")
           ordered = [entry.symbol for entry in load_universe(universe)]
+          selected = ordered[20:30]
+          assert selected == ["ENKAI", "EREGL", "FENER", "FROTO", "GARAN", "GSRAY", "GUBRF", "TURSG", "HALKB", "HEKTS"]
+
           files = discover_raw_symbol_files(Path(".artifacts/source/raw"), ordered)
           coverage = load_timestamp_coverage(files)
           calendar = build_canonical_calendar(
               coverage,
               coverage_threshold=0.8,
               start_date="2023-01-01",
-              end_date="2023-01-31",
+              end_date="2026-08-02",
           )
-          cohorts, skips = build_monthly_cohorts(calendar, horizon=5)
-          assert cohorts, skips
+          cohorts, _ = build_monthly_cohorts(calendar, horizon=5)
+          raw_frames = {symbol: load_raw_symbol_frame(files[symbol]) for symbol in selected}
+          groups, _ = _prepare(raw_frames, cohorts, selected, 400, 5, 1e-8)
 
           manifest = json.load(open(".models/kronos-small/asset_manifest.json"))
           adapter = KronosModelAdapter(
@@ -75,57 +79,47 @@ jobs:
               seed=20260802,
           ).load()
 
-          symbols = ["ENKAI", "EREGL", "FENER", "FROTO", "GARAN", "GSRAY", "GUBRF", "TURSG", "HALKB", "HEKTS"]
           failures = []
-          for symbol in symbols:
-              frame = load_raw_symbol_frame(files[symbol])
-              bundles, symbol_skips = build_benchmark_windows(
-                  symbol, frame, cohorts, lookback=400, horizon=5
-              )
-              if not bundles:
-                  print(f"DIAG {symbol} NO_ELIGIBLE {symbol_skips}")
-                  continue
-              bundle = bundles[0]
-              origin_factor = float(bundle.context_provider_factors[-1])
-              rebased, _ = rebase_context(
-                  bundle.raw_context,
-                  bundle.context_provider_factors,
-                  origin_factor,
-              )
-              window = bundle.prediction_window(rebased)
-              seed = derive_cohort_seed(20260802, window.forecast_origin)
+          for (origin, target_timestamps), items in sorted(groups.items(), key=lambda pair: pair[0][0]):
+              windows = [bundle.prediction_window(rebased) for bundle, raw, rebased, origin_factor, exposure, repairs in items]
+              seed = derive_cohort_seed(20260802, origin)
               random.seed(seed)
               np.random.seed(seed)
               torch.manual_seed(seed)
-              output = adapter.predictor.predict_batch(
-                  [window.context.loc[:, MODEL_COLUMNS]],
-                  [window.context.timestamps],
-                  [pd.Series(window.target_timestamps)],
+              outputs = adapter.predictor.predict_batch(
+                  [window.context.loc[:, MODEL_COLUMNS] for window in windows],
+                  [window.context.timestamps for window in windows],
+                  [pd.Series(window.target_timestamps) for window in windows],
                   pred_len=5,
                   T=1.0,
                   top_p=0.9,
                   sample_count=1,
                   verbose=False,
-              )[0]
-              closes = pd.to_numeric(output["close"], errors="coerce").to_numpy(float)
-              valid = bool(np.isfinite(closes).all() and (closes > 0).all())
-              print(
-                  "DIAG",
-                  symbol,
-                  window.forecast_origin.isoformat(),
-                  "context_close_min=", float(window.context.close.min()),
-                  "context_close_max=", float(window.context.close.max()),
-                  "predicted_close=", closes.tolist(),
-                  "valid=", valid,
               )
-              if not valid:
-                  failures.append({
-                      "symbol": symbol,
-                      "origin": window.forecast_origin.isoformat(),
-                      "predicted_close": closes.tolist(),
-                  })
-          Path("diagnostic.json").write_text(json.dumps(failures, indent=2))
-          assert failures, "diagnostic did not reproduce invalid close"
+              cohort_failures = []
+              for window, output in zip(windows, outputs):
+                  closes = pd.to_numeric(output["close"], errors="coerce").to_numpy(float)
+                  valid = bool(np.isfinite(closes).all() and (closes > 0).all())
+                  if not valid:
+                      item = {
+                          "symbol": window.symbol,
+                          "origin": pd.Timestamp(origin).isoformat(),
+                          "target_timestamps": [pd.Timestamp(value).isoformat() for value in target_timestamps],
+                          "context_close_min": float(window.context.close.min()),
+                          "context_close_max": float(window.context.close.max()),
+                          "predicted_close": closes.tolist(),
+                          "finite": bool(np.isfinite(closes).all()),
+                          "positive": bool((closes > 0).all()),
+                      }
+                      cohort_failures.append(item)
+                      print("INVALID", json.dumps(item, sort_keys=True))
+              if cohort_failures:
+                  failures.extend(cohort_failures)
+                  break
+              print("VALID_COHORT", pd.Timestamp(origin).date().isoformat(), len(windows))
+
+          Path("diagnostic.json").write_text(json.dumps(failures, indent=2), encoding="utf-8")
+          assert failures, "exact shard batching did not reproduce invalid close"
           PY
       - uses: actions/upload-artifact@v4
         with:

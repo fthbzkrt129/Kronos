@@ -18,22 +18,29 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install pandas==2.2.2 yfinance==1.5.1
-      - name: Verify completed-date boundary
+      - name: Inspect raw Yahoo response
         run: |
-          python scripts/download_bist_yahoo.py \
-            --universe data/universes/xu100_2026_q3.csv \
-            --as-of 2026-08-02 \
-            --symbols THYAO \
-            --start 2015-01-01 \
-            --end 2026-08-02 \
-            --output diagnostic/completed-end \
-            --retries 1 \
-            --sleep-seconds 0 \
-            --fail-on-error
           python - <<'PY'
-          import json
-          manifest = json.load(open("diagnostic/completed-end/manifest.json"))
-          assert manifest["summary"] == {"requested": 1, "succeeded": 1, "failed": 0}, manifest
-          print(json.dumps(manifest["summary"], indent=2))
-          print(manifest["successes"][0]["last_timestamp"])
+          import pandas as pd
+          import yfinance as yf
+
+          frame = yf.download(
+              "THYAO.IS",
+              start="2015-01-01",
+              end="2026-08-02",
+              interval="1d",
+              auto_adjust=False,
+              actions=False,
+              progress=False,
+              group_by="column",
+              threads=False,
+          )
+          print("shape", frame.shape)
+          print("columns", list(frame.columns))
+          required = ["Open", "High", "Low", "Close", "Volume"]
+          selected = frame.loc[:, required]
+          missing = selected.isna().any(axis=1)
+          print("missing_count", int(missing.sum()))
+          print(frame.loc[missing].to_string())
+          assert missing.any(), "expected to reproduce missing OHLCV row"
           PY

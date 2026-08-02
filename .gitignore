@@ -53,6 +53,11 @@ Desktop.ini
 # Generated BIST research data
 data/bist/
 
+# Generated zero-shot evaluation assets
+results/bist100-zero-shot/
+.artifacts/bist100-zero-shot/
+.models/kronos/
+
 # Model files (large files)
 *.pth
 *.pt

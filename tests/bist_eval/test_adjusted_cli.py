@@ -8,6 +8,7 @@ import pytest
 from bist_eval.config import AdjustedBenchmarkConfig
 from scripts.evaluate_bist100_adjusted_benchmark import run_adjusted_evaluation
 from scripts.reduce_bist100_adjusted_benchmark import (
+    _invalid_baseline_output_counts,
     _invalid_model_output_counts,
     run_adjusted_reducer,
 )
@@ -182,12 +183,15 @@ def test_two_mode_shards_reduce_to_completed_result(tmp_path):
     assert summary["symbols_requested"] == 2
     assert summary["symbols_evaluated"] == 2
     assert summary["invalid_model_output_counts"] == {}
+    assert summary["invalid_baseline_output_counts"] == {}
     run_manifest = json.loads((output / "run_manifest.json").read_text())
     assert run_manifest["symbols"] == ["AAA", "BBB"]
     assert run_manifest["evaluated_symbols"] == ["AAA", "BBB"]
     assert (output / "COMPLETED").is_file()
     assert (output / "bootstrap_intervals.csv").is_file()
-    assert "Rejected model outputs" in (output / "report.md").read_text()
+    report = (output / "report.md").read_text()
+    assert "Rejected model outputs" in report
+    assert "Rejected baseline outputs" in report
 
 
 def test_invalid_model_output_counts_are_grouped_by_arm():
@@ -210,4 +214,24 @@ def test_invalid_model_output_counts_are_grouped_by_arm():
     assert _invalid_model_output_counts(skips) == {
         "adjusted-small": 2,
         "raw-mini": 1,
+    }
+
+
+def test_invalid_baseline_output_counts_are_grouped_by_method():
+    skips = pd.DataFrame(
+        {
+            "reason_code": [
+                "invalid_baseline_output",
+                "invalid_baseline_output",
+                "invalid_model_output",
+            ],
+            "reason_detail": [
+                "arm=adjusted-baselines; method=linear_trend_20; negative close",
+                "arm=adjusted-baselines; method=linear_trend_20; negative close",
+                "arm=adjusted-small; negative close",
+            ],
+        }
+    )
+    assert _invalid_baseline_output_counts(skips) == {
+        "linear_trend_20": 2
     }

@@ -85,6 +85,10 @@ timestamps,open,high,low,close,volume,amount
 
 The manifest records the requested date range, successful symbols, failed symbols, row counts, file paths, data limitations, and audited OHLC repairs. Without `--fail-on-error`, failures are recorded but successful symbols are still written.
 
+## Verified run
+
+The GitHub Actions validation for the 2026-08-02 snapshot produced 100 successful symbols, 0 failures, 100 raw CSV files, 100 Kronos CSV files, one manifest, and two audited OHLC-envelope repairs (`MIATK` low and `PSGYO` high on 2022-06-27).
+
 ## Run tests
 
 Tests inject fake Yahoo responses and require no network connection.
